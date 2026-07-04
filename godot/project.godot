@@ -1,0 +1,41 @@
+; Godot 4 project — BACKROOMS // FOUND FOOTAGE (bridge/stub)
+; Open this folder in Godot 4.2+ ("Import" the project.godot).
+; This is a starting scaffold: the VHS post shader, folder layout and helper
+; scripts are wired up; build your levels/scenes on top. See README.md.
+
+config_version=5
+
+[application]
+
+config/name="THE BACKROOMS // FOUND FOOTAGE"
+config/description="Found-footage Backrooms — Godot bridge. Shares assets/models GLBs with the web build."
+config/features=PackedStringArray("4.2", "Forward Plus")
+run/main_scene="res://scenes/Main.tscn"
+boot_splash/show_image=false
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="viewport"
+window/vsync/vsync_mode=1
+
+[rendering]
+
+renderer/rendering_method="forward_plus"
+environment/defaults/default_clear_color=Color(0.043, 0.035, 0.024, 1)
+anti_aliasing/quality/msaa_3d=0
+textures/default_filters/anisotropic_filtering_level=3
+
+[input]
+
+move_forward={ "deadzone": 0.2, "events": [ { "type":"key", "keycode":87 } ] }  ; W
+move_back={ "deadzone": 0.2, "events": [ { "type":"key", "keycode":83 } ] }     ; S
+move_left={ "deadzone": 0.2, "events": [ { "type":"key", "keycode":65 } ] }     ; A
+move_right={ "deadzone": 0.2, "events": [ { "type":"key", "keycode":68 } ] }    ; D
+run={ "deadzone": 0.2, "events": [ { "type":"key", "keycode":4194325 } ] }      ; Shift
+interact={ "deadzone": 0.2, "events": [ { "type":"key", "keycode":69 } ] }      ; E
+light={ "deadzone": 0.2, "events": [ { "type":"key", "keycode":70 } ] }         ; F
+nightshot={ "deadzone": 0.2, "events": [ { "type":"key", "keycode":78 } ] }     ; N
+cycle_vhs={ "deadzone": 0.2, "events": [ { "type":"key", "keycode":86 } ] }     ; V
+toggle_43={ "deadzone": 0.2, "events": [ { "type":"key", "keycode":66 } ] }     ; B

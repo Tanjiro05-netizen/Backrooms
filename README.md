@@ -1,0 +1,71 @@
+# THE BACKROOMS // FOUND FOOTAGE
+
+A found-footage Backrooms horror game. Descend through four floors — The Lobby,
+the Habitable Zone, Pipe Dreams, and Level 37: The Poolrooms — collecting tapes
+while something different hunts each floor, all seen through a 1996 camcorder.
+
+The renderer is hand-written on **Three.js**: every texture, level, and creature
+is generated procedurally, and the "camera" runs through a custom multi-pass
+**VHS composite-signal** shader.
+
+```
+Backrooms/
+├── web/
+│   └── index.html                 ← the game (enhanced). Open this.
+├── assets/
+│   ├── models/                    ← shared Blender → GLB models
+│   │   ├── entities/              ← smiler/hound/crawler/drowned .glb (optional)
+│   │   ├── props/
+│   │   └── README.md              ← Blender export conventions
+│   └── textures/
+├── godot/                         ← Godot 4 bridge (VHS shader + scaffold)
+│   ├── project.godot
+│   ├── scenes/Main.tscn
+│   ├── shaders/vhs.gdshader
+│   ├── scripts/                   ← vhs_controller.gd, entity_loader.gd
+│   └── README.md
+├── docs/
+│   └── ENHANCEMENTS.md            ← what changed & the research behind it
+└── backrooms_found_footagev3.html ← original, untouched (backup)
+```
+
+## Run the web game
+
+- **Quick:** double-click `web/index.html`. Runs fully; uses the built-in
+  procedural creatures.
+- **With GLB models / for development:** serve over http so the browser can
+  load `.glb` files:
+  ```bash
+  cd Backrooms
+  python3 -m http.server 8123
+  # open http://localhost:8123/web/index.html
+  ```
+
+## Controls
+
+| Key | Action | Key | Action |
+|-----|--------|-----|--------|
+| W A S D | Move | Shift | Run |
+| Mouse | Look | E | Interact |
+| F | Camera light | N | Nightshot (IR) |
+| **V** | **Cycle tape filter** (Clean · VHS · Heavy) | **B** | **Toggle 4:3 camcorder framing** |
+
+Filter, framing and render-quality are also on the **title screen** and persist
+between sessions.
+
+## The two pipelines
+
+- **Blender → GLB → Web** — export a `.glb` into `assets/models/entities/`; the
+  web game hot-swaps its procedural creature for your model (with a mixer for
+  baked animations). Missing files fall back silently.
+- **Blender → GLB → Godot** — the same GLBs feed the Godot 4 project in `godot/`,
+  which already carries the ported VHS shader and matching input maps.
+
+`.glb` is the single shared format both engines read natively, so you author
+once and edit in whichever tool fits the task.
+
+## What was enhanced
+
+See [`docs/ENHANCEMENTS.md`](docs/ENHANCEMENTS.md) for the full breakdown of the
+VHS shader rebuild, graphics changes, the GLB pipeline, and the game-design /
+analog-horror research that informed them.

@@ -1,0 +1,3 @@
+Optional set-dressing .glb files (crates, lamps, pipes, signage).
+Load them from your own code or wire them into the level builder.
+See ../README.md for export conventions.

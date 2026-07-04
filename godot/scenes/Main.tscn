@@ -1,0 +1,78 @@
+[gd_scene load_steps=8 format=3]
+
+; Minimal bootstrap scene: a lit room-ish floor viewed through the VHS filter.
+; It exists so the project opens and runs out of the box — replace/expand the
+; 3D side with your real level. The CanvasLayer + ColorRect apply the shader.
+
+[ext_resource type="Shader" path="res://shaders/vhs.gdshader" id="1_vhs"]
+[ext_resource type="Script" path="res://scripts/vhs_controller.gd" id="2_ctrl"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_1"]
+shader = ExtResource("1_vhs")
+shader_parameter/res = Vector2(1280, 720)
+shader_parameter/intensity = 0.6
+shader_parameter/aspect43 = 0.0
+shader_parameter/sat = 1.0
+shader_parameter/dropout = 0.0
+shader_parameter/ir = 0.0
+shader_parameter/glitch = 0.0
+shader_parameter/lowbatt = 0.0
+shader_parameter/heat = 0.0
+
+[sub_resource type="Environment" id="Environment_1"]
+background_mode = 1
+background_color = Color(0.05, 0.043, 0.03, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.36, 0.33, 0.25, 1)
+ambient_light_energy = 0.5
+fog_enabled = true
+fog_light_color = Color(0.08, 0.063, 0.04, 1)
+fog_density = 0.04
+glow_enabled = true
+glow_intensity = 0.9
+glow_bloom = 0.2
+tonemap_mode = 3
+
+[sub_resource type="StandardMaterial3D" id="Mat_floor"]
+albedo_color = Color(0.44, 0.38, 0.22, 1)
+roughness = 1.0
+
+[sub_resource type="PlaneMesh" id="Plane_1"]
+size = Vector2(40, 40)
+
+[sub_resource type="BoxMesh" id="Box_1"]
+size = Vector3(40, 5, 1)
+
+[node name="Main" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_1")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.86, -0.35, 0.37, 0, 0.73, 0.68, -0.5, -0.59, 0.63, 0, 8, 0)
+light_energy = 0.6
+shadow_enabled = true
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.62, 6)
+fov = 72.0
+
+[node name="Floor" type="MeshInstance3D" parent="."]
+mesh = SubResource("Plane_1")
+surface_material_override/0 = SubResource("Mat_floor")
+
+[node name="BackWall" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.5, -12)
+mesh = SubResource("Box_1")
+surface_material_override/0 = SubResource("Mat_floor")
+
+[node name="PostFX" type="CanvasLayer" parent="."]
+layer = 10
+
+[node name="VHS" type="ColorRect" parent="PostFX"]
+material = SubResource("ShaderMaterial_1")
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+script = ExtResource("2_ctrl")

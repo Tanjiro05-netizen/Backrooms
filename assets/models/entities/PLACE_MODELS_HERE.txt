@@ -1,0 +1,9 @@
+Drop entity models here as .glb, named exactly:
+
+  smiler.glb    (Level 0  — The Smiler)
+  hound.glb     (Level 1  — The Hound)
+  crawler.glb   (Level 2  — The Crawler)
+  drowned.glb   (Level 37 — The Drowned)
+
+Missing files fall back to the built-in procedural creatures.
+See ../README.md for the Blender export conventions.
