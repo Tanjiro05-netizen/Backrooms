@@ -94,17 +94,22 @@ function biped(cfg){
   chest.add(neck);
   const head=new T.Group();head.name='head';head.position.y=cfg.neckLen;neck.add(head);
   head.add(ball('skull',cfg.headR,mat,1.28));
-  if(cfg.grin){                     /* faint hanging grin — the Level 0 signature */
-    const g=new T.Mesh(new T.TorusGeometry(cfg.headR*0.62,0.014,6,14,2.1),GLOW(0xfff3c0));
-    g.name='grin';g.position.set(0,-cfg.headR*0.25,-cfg.headR*0.86);
-    g.rotation.z=Math.PI+0.5* (Math.PI-2.1)/1;g.rotation.x=-0.15;
+  if(cfg.grin){                     /* faint hanging grin — the Level 0 signature.
+       Too wide, too dim, slightly crooked: a smear of light, not a smiley. */
+    const gm=new T.MeshStandardMaterial({color:0x000000,emissive:0xffe9b0,
+      emissiveIntensity:1.1,roughness:0.4});
+    const g=new T.Mesh(new T.TorusGeometry(cfg.headR*0.74,0.009,5,16,2.6),gm);
+    g.name='grin';g.position.set(0,-cfg.headR*0.30,-cfg.headR*0.82);
+    g.rotation.z=Math.PI+0.5*(Math.PI-2.6)+0.13;g.rotation.x=-0.15;
     head.add(g);
   }
   if(cfg.eyes){
     for(const s of [-1,1]){
-      const e=new T.Mesh(new T.SphereGeometry(0.021,6,5),GLOW(cfg.eyes));
+      const em=new T.MeshStandardMaterial({color:0x000000,emissive:cfg.eyes,
+        emissiveIntensity:1.5,roughness:0.4});
+      const e=new T.Mesh(new T.SphereGeometry(0.016,6,5),em);
       e.name='eye'+(s<0?'L':'R');
-      e.position.set(s*cfg.headR*0.4,cfg.headR*0.22,-cfg.headR*0.82);
+      e.position.set(s*cfg.headR*0.38,cfg.headR*0.20,-cfg.headR*0.84);
       head.add(e);
     }
   }

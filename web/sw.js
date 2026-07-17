@@ -2,7 +2,7 @@
    Cache-first with background refresh: the game is fully playable with no
    network (procedural world + local three.js + stickman models), which is
    also what a wrapped iOS build expects. Bump VERSION on every release. */
-const VERSION = 'backrooms-v1';
+const VERSION = 'backrooms-v2';
 const CORE = [
   './',
   'index.html',
