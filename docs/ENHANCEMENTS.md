@@ -1,5 +1,95 @@
 # Enhancements & Research Notes
 
+## 0. Eerie stickman entities — generated, rigged, animated
+
+All four floors are now haunted by **eerie stickmen**: matte-black, wrongly
+proportioned figures generated as animated `.glb` models by
+`tools/gen_stickmen.js` (~122 kB each) and loaded through the existing
+hot-swap registry:
+
+- **stickman_tall** (Level 0) — 2.6 m, arms to its knees, a faint hanging
+  grin and pinprick eyes; slow deliberate stride.
+- **stickman_hound** (Level 1) — pale-eyed quadruped, diagonal gallop.
+- **stickman_crawler** (Level 2) — bent double, walking on its hands, face
+  craned up at you.
+- **stickman_drowned** (Level 37) — waterlogged slump, dangling arms, head
+  cocked sideways, dripping-slow gait.
+
+Each model carries baked **idle / walk / attack** clips (node-rig quaternion
+tracks — no skinning, cheap on mobile). The idle loops have sharp head-jerk
+keyframes baked in, so they keep *noticing* you.
+
+Entity movement was upgraded to drive them: the game picks the clip from what
+the AI is doing, scales the walk cycle to actual ground speed (slow creep =
+slow deliberate steps), layers the nervous head twitch on top of the mixer
+every frame, and bodies now **ease into turns** instead of snapping (teleport
+spawns still snap so a visible spin never gives a reposition away; the death
+lunge locks on instantly).
+
+Regenerate or restyle with `node tools/gen_stickmen.js` (needs
+`npm i three@0.128.0`). The original `smiler.glb` is kept untouched in
+`assets/models/entities/` — point ENTITY_MODELS back at it to restore it.
+
+## 0a. Polish pass — high-quality image, artifacts as moments
+
+Researched against the Kane Pixels found-footage standard and shipped Backrooms
+games (see [`DESIGN_NOTES.md`](DESIGN_NOTES.md)): the image is now clean and
+sharp by default, and every analog artifact is **event-driven** instead of a
+permanent floor — dropout dashes and glitch streaks only fire during dropout /
+glitch moments, the tracking band drifts in and out, grain is a fine film-like
+floor (~3× lower), scanlines are halved, and the grade has deep blacks instead
+of a washed lift. Presets remap to CLEAN 0 · VHS 0.42 · HEAVY 0.85; default
+render quality is CRISP at up to 2.0 device pixel ratio, with adaptive
+resolution as the perf net. Horror still spikes the signal — it just has
+headroom to read as a *moment* now.
+
+## 0b. Intensity update — graphics, dread & gameplay (single-player)
+
+Aimed at the *Backrooms: Escape Together* bar, within a phone's budget.
+
+**Graphics**
+- **Baked ambient occlusion.** The floor and ceiling are single planes over the
+  whole map, so AO is baked per level into a canvas from the wall grid (soft
+  dark bands along every wall edge, radial pools under pillars) and sampled as
+  an `aoMap`. Walls get a matching contact-shadow gradient injected into the
+  standard shader (`addWallAO`). Corners and corridor edges now read as
+  *grounded* instead of floating CG.
+- **Two-cone flashlight.** A wide dim spill spot around the sharp hot spot —
+  and the lamp gutters when the battery is nearly dead.
+- **Adaptive resolution.** A rolling frame-time average rescales the internal
+  render buffer (0.55–1×) to hold frame rate; the VHS grain hides the upscale.
+  This is the lever that keeps iPhones at 60 when they thermal-throttle.
+- **three.js vendored locally** (`web/lib/`) — the game now runs fully offline,
+  a hard requirement for wrapping it as an iOS app.
+
+**Intensity**
+- **Nerve (sanity) system.** Darkness, blackouts, sightings and hits erode it;
+  light, tapes and almond water restore it. Low nerve bleeds into everything:
+  the VHS shader degrades, hands tremble, breathing and a heartbeat rise in the
+  mix, and the viewfinder starts showing you things that are not there.
+- **Horror director.** Between encounters it schedules ambient dread: distant
+  thuds several rooms away (stereo-panned), section blackouts with a power-down
+  whine, the 60 Hz hum simply *stopping*, false autofocus panics, whispers in
+  the static, and half-second silhouette glimpses.
+- **Entity upgrades.** Hunts are telegraphed ~1.3 s ahead (lights sag,
+  something exhales); during stalking phases the entity closes ground while
+  you are not looking (never while observed, never through your line of
+  sight); hunts grant an adrenaline stamina surge so you always get a chance
+  to run.
+
+**Gameplay**
+- **Items with randomized spawns:** camcorder batteries (+55% charge) and
+  almond water — carried, drunk with **[Q]** / DRINK for health + nerve.
+- New HUD: nerve bar, carry indicator, low-battery lamp behaviour.
+
+**Mobile / iOS**
+- **Gyro look** (title-screen toggle, iOS 13+ permission flow): aim the phone
+  like the camcorder; blends with drag-look.
+- Safe-area insets (`viewport-fit=cover` + `env(safe-area-inset-*)`) so
+  controls clear the notch/home indicator; haptic hooks on damage, hunts,
+  pickups and death (`navigator.vibrate` today — a no-op on iOS Safari, live
+  once wrapped natively).
+
 ## 1. VHS shader — rebuilt around the real analog signal path
 
 The previous shader did an RGB channel split + scanlines + grain. That reads as
