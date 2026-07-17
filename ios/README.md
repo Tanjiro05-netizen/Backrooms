@@ -22,21 +22,19 @@ working without a server or CDN.
 2. **Set your signing identity.** In Xcode, replace `com.example.backrooms`,
    choose your Apple development team, and register that identifier in the
    Apple Developer portal when you create an App Store Connect record.
-3. **Set the product identity.** Replace the temporary display name, version,
-   build number, app icon, launch artwork, and copyright before archiving.
+3. **Verify gyro feel on hardware.** Both landscape directions are mapped
+   (the coordinator mirrors the axes from the live interface orientation);
+   confirm the signs feel right on a physical device and flip `mirror` in
+   `BackroomsWebView.swift` if they do not.
 4. **Test the shipped asset layout.** On a device, start a run and verify every
    GLB creature loads. The app bundles `web/` and `assets/` as folder resources;
    do not flatten or move either folder without also changing the relative
    asset URLs in the game.
-5. **Calibrate the gyro.** Test both landscape directions and tune the two
-   native rotation multipliers in `BackroomsWebView.swift` against a real
-   device. Keep the game-side gyro toggle available until this has been tested
-   with multiple players and devices.
-6. **Add privacy-sensitive features deliberately.** Do not add a microphone
+5. **Add privacy-sensitive features deliberately.** Do not add a microphone
    usage description, Game Center capability, CloudKit container, analytics
    SDK, or StoreKit product until its player-facing feature and App Store
    privacy declaration are ready.
-7. **Profile before expanding content.** Archive a Release build, use
+6. **Profile before expanding content.** Archive a Release build, use
    Instruments/Xcode's memory graph on device, and run a 20–30 minute session
    on at least one baseline supported iPhone before committing to the web-shell
    path for launch.
@@ -44,15 +42,23 @@ working without a server or CDN.
 ## What exists now
 
 - Local, offline-first game bundle.
-- Landscape-only app orientation and an immersive full-screen SwiftUI host.
+- Landscape-only app orientation and an immersive full-screen SwiftUI host
+  (status bar and home indicator hidden, first edge-swipe deferred to the game).
+- Complete `Info.plist` (executable/bundle metadata, black launch screen,
+  export-compliance flag) and an asset catalog with the in-engine app icon
+  (1024 px, no alpha) and launch background color.
+- `AVAudioSession` playback category — the tape keeps playing with the silent
+  switch on — and the idle timer disabled so the screen never sleeps mid-run.
 - `WKScriptMessageHandler` bridge named `backroomsNative`.
-- Native impact feedback for the web game's existing pickup, damage, and death
-  haptic intents.
-- Native Core Motion gyro input routed into the existing game-side gyro toggle;
-  it automatically stops when the application resigns active.
+- Native impact feedback via cached, pre-warmed haptic generators for the
+  game's pickup, damage, hunt, and death intents.
+- Native Core Motion gyro at 60 Hz routed into the existing game-side gyro
+  toggle, with both landscape orientations mapped; it stops when the app
+  resigns active and re-arms itself through `backrooms:nativeResume`.
 - A lifecycle bridge that pauses an active run when the application backgrounds
   or is interrupted, so the player explicitly resumes audio and gameplay.
 - External links open in Safari rather than replacing the game document.
+- Web Inspector enabled for Debug builds (Safari → Develop → your device).
 
 ## Intentionally deferred
 

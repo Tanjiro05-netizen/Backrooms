@@ -1694,6 +1694,9 @@ window.addEventListener('backrooms:nativeMotion',e=>{
 window.addEventListener('backrooms:nativePause',()=>{
   if(state==='play'){showPause(true);if(AC&&AC.suspend)AC.suspend();}
 });
+window.addEventListener('backrooms:nativeResume',()=>{
+  syncNativeGyro();   /* the shell stopped Core Motion on background — re-arm it */
+});
 function toggleLight(){
   if(player.battery<=1&&!player.lightOn)return;
   player.lightOn=!player.lightOn;if(player.lightOn)player.ir=false;

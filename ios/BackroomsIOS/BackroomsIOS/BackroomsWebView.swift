@@ -23,6 +23,9 @@ struct BackroomsWebView: UIViewRepresentable {
         view.scrollView.contentInsetAdjustmentBehavior = .never
         view.navigationDelegate = context.coordinator
         view.allowsBackForwardNavigationGestures = false
+        #if DEBUG
+        view.isInspectable = true   // Safari → Develop → device → index.html
+        #endif
         context.coordinator.webView = view
         context.coordinator.observeApplicationLifecycle()
 
@@ -77,22 +80,32 @@ struct BackroomsWebView: UIViewRepresentable {
                 self?.stopGyro()
                 self?.dispatchGameEvent("backrooms:nativePause")
             })
+            lifecycleObservers.append(center.addObserver(
+                forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                // The game re-arms gyro from its own settings state on this event.
+                self?.dispatchGameEvent("backrooms:nativeResume")
+            })
         }
+
+        // Cached and pre-warmed: Taptic latency is the difference between a
+        // hit that lands and a buzz that arrives after the scare is over.
+        private let lightImpact = UIImpactFeedbackGenerator(style: .light)
+        private let heavyImpact = UIImpactFeedbackGenerator(style: .heavy)
+        private let notice = UINotificationFeedbackGenerator()
 
         private func playHaptic(pattern: Any?) {
             let maximum = maxPatternValue(pattern)
-            let generator: UIFeedbackGenerator
             if maximum >= 100 {
-                generator = UINotificationFeedbackGenerator()
-                (generator as? UINotificationFeedbackGenerator)?.notificationOccurred(.error)
+                notice.notificationOccurred(.error)
+                notice.prepare()
             } else if maximum >= 60 {
-                generator = UIImpactFeedbackGenerator(style: .heavy)
-                (generator as? UIImpactFeedbackGenerator)?.impactOccurred()
+                heavyImpact.impactOccurred()
+                heavyImpact.prepare()
             } else {
-                generator = UIImpactFeedbackGenerator(style: .light)
-                (generator as? UIImpactFeedbackGenerator)?.impactOccurred()
+                lightImpact.impactOccurred()
+                lightImpact.prepare()
             }
-            generator.prepare()
         }
 
         private func maxPatternValue(_ pattern: Any?) -> Int {
@@ -110,10 +123,13 @@ struct BackroomsWebView: UIViewRepresentable {
 
             motionManager.deviceMotionUpdateInterval = 1.0 / 60.0
             motionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: .main) { [weak self] motion, _ in
-                guard let rotation = motion?.rotationRate else { return }
-                // In landscape, pitch about the long axis feels like looking up/down;
-                // yaw is inverted so a rightward device turn looks right in-game.
-                self?.dispatchMotion(yaw: -rotation.y, pitch: rotation.x)
+                guard let self, let rotation = motion?.rotationRate else { return }
+                // Device-frame rotation rates flip with the landscape direction,
+                // so resolve the live interface orientation and mirror both axes —
+                // the camcorder then feels identical however the phone is held.
+                let orientation = self.webView?.window?.windowScene?.interfaceOrientation ?? .landscapeRight
+                let mirror: Double = (orientation == .landscapeLeft) ? -1 : 1
+                self.dispatchMotion(yaw: -rotation.y * mirror, pitch: rotation.x * mirror)
             }
         }
 
