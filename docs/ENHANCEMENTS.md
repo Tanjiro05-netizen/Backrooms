@@ -1,6 +1,19 @@
 # Enhancements & Research Notes
 
-## 0. Intensity update — graphics, dread & gameplay (single-player)
+## 0a. Polish pass — high-quality image, artifacts as moments
+
+Researched against the Kane Pixels found-footage standard and shipped Backrooms
+games (see [`DESIGN_NOTES.md`](DESIGN_NOTES.md)): the image is now clean and
+sharp by default, and every analog artifact is **event-driven** instead of a
+permanent floor — dropout dashes and glitch streaks only fire during dropout /
+glitch moments, the tracking band drifts in and out, grain is a fine film-like
+floor (~3× lower), scanlines are halved, and the grade has deep blacks instead
+of a washed lift. Presets remap to CLEAN 0 · VHS 0.42 · HEAVY 0.85; default
+render quality is CRISP at up to 2.0 device pixel ratio, with adaptive
+resolution as the perf net. Horror still spikes the signal — it just has
+headroom to read as a *moment* now.
+
+## 0b. Intensity update — graphics, dread & gameplay (single-player)
 
 Aimed at the *Backrooms: Escape Together* bar, within a phone's budget.
 

@@ -12,7 +12,7 @@
   #app{position:fixed;inset:0;background:#000}
   canvas{display:block;width:100%;height:100%}
   .osd{position:fixed;color:var(--osd);font-size:clamp(13px,1.6vw,19px);letter-spacing:.14em;font-weight:700;z-index:20;pointer-events:none;
-    text-shadow:1px 0 rgba(255,40,90,.35),-1px 0 rgba(0,255,255,.30),0 0 7px rgba(255,255,240,.45),0 0 2px #000;filter:blur(.35px);user-select:none}
+    text-shadow:1px 0 rgba(255,40,90,.28),-1px 0 rgba(0,255,255,.24),0 0 6px rgba(255,255,240,.38),0 0 2px #000;filter:blur(.2px);user-select:none}
   #osdRec{top:3.5%;left:4%;display:flex;align-items:center;gap:.55em}
   #recDot{width:.75em;height:.75em;border-radius:50%;background:var(--rec);box-shadow:0 0 9px var(--rec);animation:blink 1.05s steps(1) infinite}
   @keyframes blink{50%{opacity:0}}
@@ -264,9 +264,9 @@ let levelIdx=0, LV=LEVELS[0];
    vhs preset -> master intensity fed to the VHS shader:
      0.0 = CLEAN · 0.6 = VHS · 1.0 = HEAVY
    ========================================================= */
-const VHS_PRESETS={clean:0.0,vhs:0.6,heavy:1.0};
+const VHS_PRESETS={clean:0.0,vhs:0.42,heavy:0.85};
 const SETTINGS=(function(){
-  const d={preset:'vhs',vhs:VHS_PRESETS.vhs,crt43:false,quality:0.8,grain:1.0,bloom:0.9,gyro:false};
+  const d={preset:'vhs',vhs:VHS_PRESETS.vhs,crt43:false,quality:1.0,grain:1.0,bloom:0.8,gyro:false};
   try{const s=JSON.parse(localStorage.getItem('br_settings')||'{}');Object.assign(d,s);}catch(e){}
   d.vhs=VHS_PRESETS[d.preset]!==undefined?VHS_PRESETS[d.preset]:d.vhs;
   return d;
@@ -3355,37 +3355,38 @@ const VHS_FRAG=[
 ' float x0=(1.0-winW)*0.5;',
 ' float inWin=step(x0,sUv.x)*step(sUv.x,1.0-x0);',
 ' sUv.x=(sUv.x-x0)/winW;',
-/* --- lens barrel distortion --- */
+/* --- lens barrel distortion (kept subtle — the image must stay scrutinizable) --- */
 ' vec2 cc=sUv-0.5;',
 ' float r2=dot(cc,cc);',
-' vec2 uv=0.5+cc*(1.0+(0.045+0.03*V)*r2+0.04*r2*r2);',
+' vec2 uv=0.5+cc*(1.0+(0.028+0.020*V)*r2+0.025*r2*r2);',
 /* --- heat shimmer (level 2) --- */
 ' uv.x+=sin(uv.y*70.0+tt*9.0)*0.0016*heat;',
 ' uv.y+=sin(uv.x*50.0-tt*7.0)*0.0010*heat;',
-/* --- vertical hold roll (occasional) --- */
-' float rollGate=step(0.993-dead*0.5-glitch*0.03,hash(vec2(floor(tt*2.5),7.0)));',
+/* --- vertical hold roll (rare) --- */
+' float rollGate=step(0.9975-dead*0.5-glitch*0.02,hash(vec2(floor(tt*2.5),7.0)));',
 ' uv.y=fract(uv.y+rollGate*(n2(vec2(tt*6.0,0.0))*0.6));',
-/* --- tracking band + line jitter --- */
+/* --- tracking band: intermittent, not a permanent roaming wobble --- */
 ' float bandPos=fract(tt*0.11+0.3);',
 ' float band=smoothstep(0.08,0.0,abs(uv.y-bandPos));',
-' float trackAmt=band*(0.004+0.05*G+0.05*lowbatt*step(0.93,hash(vec2(floor(tt*2.0),3.0))));',
+' float bGate=smoothstep(0.62,0.80,n2(vec2(tt*0.35,4.0)));',   /* drifts in & out */
+' float trackAmt=band*(0.0012*bGate+0.05*G+0.04*lowbatt*step(0.93,hash(vec2(floor(tt*2.0),3.0))));',
 ' uv.x+=(n2(vec2(uv.y*140.0,tt*28.0))-0.5)*trackAmt*8.0*(0.4+V);',
-' uv.x+=(hash(vec2(floor(uv.y*res.y),floor(tt*60.0)))-0.5)*(0.0009+G*0.012)*(0.4+V);',
+' uv.x+=(hash(vec2(floor(uv.y*res.y),floor(tt*60.0)))-0.5)*(0.0004+G*0.010)*(0.4+V);',
 ' uv.x+=dead*(n2(vec2(floor(uv.y*30.0),tt*20.0))-0.5)*0.35;',
 /* --- head-switch tear along the bottom scanlines --- */
-' float hb=0.05+0.02*V;',
+' float hb=0.035+0.015*V;',
 ' float hsw=smoothstep(hb,0.0,sUv.y);',
-' uv.x+=hsw*(n2(vec2(tt*40.0,sUv.y*420.0))-0.5)*0.28*(0.4+V);',
+' uv.x+=hsw*(n2(vec2(tt*40.0,sUv.y*420.0))-0.5)*0.20*(0.4+V);',
 /* ========== LUMA: sharp with ringing/overshoot ========== */
 ' float px=1.0/res.x;',
 ' vec3 c0=T(uv);',
 ' float Y=LUM(c0);',
 ' float Yl=LUM(T(uv-vec2(px*2.0,0.0)));',
 ' float Yr=LUM(T(uv+vec2(px*2.0,0.0)));',
-' Y+=(Y-(Yl+Yr)*0.5)*(0.35+0.55*V);',            /* unsharp overshoot -> ringing */
+' Y+=(Y-(Yl+Yr)*0.5)*(0.22+0.40*V);',            /* unsharp overshoot -> ringing */
 /* ========== CHROMA: band-limited + delayed to the right ========== */
-' float cw=(1.5+9.0*V)*px;',                       /* chroma bandwidth (blur width) */
-' float cd=(2.0+7.0*V)*px;',                        /* chroma delay */
+' float cw=(1.2+6.0*V)*px;',                       /* chroma bandwidth (blur width) */
+' float cd=(1.5+5.0*V)*px;',                        /* chroma delay */
 ' vec2 cuv=uv-vec2(cd,0.0);',
 ' vec3 ca=T(cuv)*0.24;',
 ' ca+=T(cuv-vec2(cw,0.0))*0.20;ca+=T(cuv+vec2(cw,0.0))*0.14;',
@@ -3397,52 +3398,53 @@ const VHS_FRAG=[
 ' float field=floor(tt*50.0);',
 ' float dc=sin((uv.x*res.x+uv.y*res.y*2.0+field)*1.5708)*0.5;',
 ' float cEdge=clamp(abs(I)+abs(Q),0.0,1.0);',
-' I+=dc*cEdge*0.10*V; Q-=dc*cEdge*0.10*V;',
+' I+=dc*cEdge*0.06*V; Q-=dc*cEdge*0.06*V;',
 /* chroma noise (independent of luma noise) */
 ' float cn=(hash(vec2(floor(uv.x*res.x*0.5),floor(uv.y*res.y*0.5)+field))-0.5);',
-' I+=cn*0.05*V; Q+=cn*0.05*V;',
+' I+=cn*0.028*V; Q+=cn*0.028*V;',
 ' I*=sat; Q*=sat;',
 /* ========== recombine YIQ -> RGB ========== */
 ' vec3 col=vec3(Y+0.956*I+0.621*Q, Y-0.272*I-0.647*Q, Y-1.106*I+1.703*Q);',
 /* subtle residual RGB fringe for lens character */
 ' vec2 dir=cc/max(0.001,sqrt(r2));',
-' float ab=(0.0006+G*0.006+r2*0.003)*(0.5+V);',
+' float ab=(0.0004+G*0.004+r2*0.002)*(0.5+V);',
 ' col.r=mix(col.r,T(uv+dir*ab).r,0.6);',
 ' col.b=mix(col.b,T(uv-dir*ab).b,0.6);',
 /* bloom */
 ' col+=texture2D(tBloom,uv).rgb*bloomAmt;',
-/* colour grade: warm-shadow / cool-highlight tape look */
-' col=col*0.97+0.03;',
-' col=pow(max(col,0.0),vec3(0.94));',
-' col*=mix(vec3(1.0),vec3(1.05,1.0,0.90),0.5+0.5*V);',
+/* colour grade: deep blacks, gentle warm cast — filmic rather than washed */
+' col=col*0.985+0.015;',
+' col=pow(max(col,0.0),vec3(0.97));',
+' col*=mix(vec3(1.0),vec3(1.03,1.0,0.94),0.5+0.5*V);',
 ' float lum=LUM(col);',
-' col=mix(vec3(lum),col,mix(1.0,0.86,V));',       /* gentle desaturate with intensity */
-/* luminance flutter (AGC pumping) */
-' col*=1.0-V*(0.02-0.03*hash(vec2(floor(tt*24.0),1.0)));',
+' col=mix(vec3(lum),col,mix(1.0,0.92,V));',       /* gentle desaturate with intensity */
+/* luminance flutter (AGC pumping) — barely there */
+' col*=1.0-V*(0.012-0.018*hash(vec2(floor(tt*24.0),1.0)));',
 /* IR nightshot */
 ' vec3 irc=vec3(0.20,1.0,0.28)*(lum*1.7+0.05);',
 ' col=mix(col,irc,ir);',
-/* scanlines + interlace shimmer */
-' float sl=1.0-(0.10+0.05*V)*(0.5+0.5*sin(uv.y*res.y*3.14159));',
-' float inter=1.0-0.045*V*step(0.5,fract(uv.y*res.y*0.5+field*0.5));',
+/* scanlines + interlace shimmer — a texture, not a blind */
+' float sl=1.0-(0.045+0.035*V)*(0.5+0.5*sin(uv.y*res.y*3.14159));',
+' float inter=1.0-0.025*V*step(0.5,fract(uv.y*res.y*0.5+field*0.5));',
 ' col*=sl*inter;',
-/* luma noise / grain */
+/* luma noise / grain: a fine film-like floor; heavy noise is event-driven */
 ' float g0=hash(uv*res+vec2(tt*97.0,tt*61.0));',
-' col+=(g0-0.5)*(0.025+0.04*V+ir*0.07+G*0.10+lowbatt*0.05);',
-/* tape dropout: bright horizontal dashes */
+' col+=(g0-0.5)*(0.008+0.020*V+ir*0.05+G*0.06+lowbatt*0.035);',
+/* tape dropout: bright dashes ONLY during dropout events — never a baseline */
 ' float ln=floor(uv.y*res.y);',
-' float dRow=step(0.975-dropout*0.12,hash(vec2(ln,floor(tt*15.0))));',
+' float dOn=step(0.01,dropout);',
+' float dRow=dOn*step(0.9985-dropout*0.012,hash(vec2(ln,floor(tt*15.0))));',
 ' float dSeg=step(0.62,hash(vec2(floor(uv.x*48.0),ln+floor(tt*15.0))));',
-' col+=dRow*dSeg*(0.22+0.4*dropout)*(0.3+V);',
-/* dropout signal-loss streaks (retain original glitch flavour) */
-' float dGate=step(0.996-G*0.01,hash(vec2(ln,floor(tt*18.0))));',
+' col+=dRow*dSeg*(0.15+0.30*dropout)*(0.3+V);',
+/* signal-loss streaks — gated behind real glitch moments */
+' float dGate=step(0.03,G)*step(0.997-G*0.010,hash(vec2(ln,floor(tt*18.0))));',
 ' float seg=step(abs(fract(uv.x*2.0+hash(vec2(ln,1.0)))-0.5),0.12);',
-' col+=dGate*seg*0.6;',
+' col+=dGate*seg*0.5;',
 /* head-switch static in the torn bottom band */
-' col=mix(col,vec3(g0*0.9),hsw*(0.35+0.35*V));',
-/* vignette + edge darkening */
-' float vig=smoothstep(0.95,0.28,r2);',
-' col*=mix(0.30,1.0,vig);',
+' col=mix(col,vec3(g0*0.9),hsw*(0.22+0.26*V));',
+/* vignette + edge darkening — gentle falloff, no tunnel */
+' float vig=smoothstep(1.05,0.30,r2);',
+' col*=mix(0.50,1.0,vig);',
 ' if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0)col=vec3(0.0);',
 ' col*=1.0-dead*0.25;',
 ' col*=inWin;',                                    /* 4:3 black bars */
@@ -3481,7 +3483,7 @@ function makePassScene(frag,uniforms){
   return sc;
 }
 function renderSize(){
-  const pr=Math.min(window.devicePixelRatio||1,1.75);
+  const pr=Math.min(window.devicePixelRatio||1,2.0);
   const q=SETTINGS.quality*adaptScale;
   return new THREE.Vector2(
     Math.max(2,Math.floor(window.innerWidth*pr*q)),
@@ -3596,7 +3598,7 @@ function forceHud(){hudT=0;}
 function hudTick(dt){
   afT-=dt;
   if(afT<0&&state==='play'){
-    afT=9+Math.random()*14;
+    afT=18+Math.random()*22;
     elAF.style.opacity=1;clickSnd();glitchSpike(0.18);
     setTimeout(()=>{elAF.style.opacity=0;},500);
   }
@@ -3693,16 +3695,16 @@ function loop(now){
   if(steamSprites.length)updateSteam(t);
   if(dust)updateDust(dt,t);
   if(fogSheets.length)updateGroundFog(t);
-  glitchPulse=Math.max(0,glitchPulse-dt*1.6);
+  glitchPulse=Math.max(0,glitchPulse-dt*2.2);
   hitFlash=Math.max(0,hitFlash-dt*1.8);
   if(elHit)elHit.style.opacity=(hitFlash*0.9).toFixed(3);
   if(state!=='dying'){
     let prox=0;
     if(state==='play'&&entity&&entity.mesh.visible){
       const d=Math.hypot(player.pos.x-entity.mesh.position.x,player.pos.z-entity.mesh.position.z);
-      prox=Math.max(0,1-d/15)*(entity.state==='hunt'?1.0:0.7);
+      prox=Math.max(0,1-d/15)*(entity.state==='hunt'?0.55:0.30);
     }
-    const g=Math.min(1.4,glitchPulse+prox);
+    const g=Math.min(1.0,glitchPulse+prox);
     vhsU.glitch.value+=(g-vhsU.glitch.value)*Math.min(1,dt*8);
   }
   vhsU.time.value=t;
@@ -3712,12 +3714,12 @@ function loop(now){
   /* live-driven settings + animated tape dropout.
      Low nerve bleeds into the tape — the recording degrades with the operator. */
   const sanFx=(state==='play'||state==='dying')?Math.max(0,100-player.sanity)/100:0;
-  vhsU.intensity.value=Math.min(1.25,SETTINGS.vhs+sanFx*sanFx*0.42);
+  vhsU.intensity.value=Math.min(1.0,SETTINGS.vhs+sanFx*sanFx*0.26);
   vhsU.aspect43.value=SETTINGS.crt43?1:0;
   vhsU.bloomAmt.value=SETTINGS.bloom;
   vhsU.dropout.value=Math.max(0,vhsU.dropout.value-dt*2.2);
-  if(SETTINGS.vhs>0.01&&Math.random()<dt*(0.35+(player.battery<20?1.3:0)+glitchPulse*2.0))
-    vhsU.dropout.value=0.55+Math.random()*0.45;
+  if(SETTINGS.vhs>0.01&&Math.random()<dt*(0.06+(player.battery<20?0.5:0)+glitchPulse*0.9))
+    vhsU.dropout.value=0.5+Math.random()*0.4;
   if(LV.theme==='pool'&&mats.water){
     mats.water.normalMap.offset.set(t*0.018,t*0.012);
     if(waterMesh)waterMesh.position.y=0.30+Math.sin(t*0.8)*0.012;
