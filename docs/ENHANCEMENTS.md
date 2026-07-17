@@ -1,5 +1,35 @@
 # Enhancements & Research Notes
 
+## 0. Eerie stickman entities — generated, rigged, animated
+
+All four floors are now haunted by **eerie stickmen**: matte-black, wrongly
+proportioned figures generated as animated `.glb` models by
+`tools/gen_stickmen.js` (~122 kB each) and loaded through the existing
+hot-swap registry:
+
+- **stickman_tall** (Level 0) — 2.6 m, arms to its knees, a faint hanging
+  grin and pinprick eyes; slow deliberate stride.
+- **stickman_hound** (Level 1) — pale-eyed quadruped, diagonal gallop.
+- **stickman_crawler** (Level 2) — bent double, walking on its hands, face
+  craned up at you.
+- **stickman_drowned** (Level 37) — waterlogged slump, dangling arms, head
+  cocked sideways, dripping-slow gait.
+
+Each model carries baked **idle / walk / attack** clips (node-rig quaternion
+tracks — no skinning, cheap on mobile). The idle loops have sharp head-jerk
+keyframes baked in, so they keep *noticing* you.
+
+Entity movement was upgraded to drive them: the game picks the clip from what
+the AI is doing, scales the walk cycle to actual ground speed (slow creep =
+slow deliberate steps), layers the nervous head twitch on top of the mixer
+every frame, and bodies now **ease into turns** instead of snapping (teleport
+spawns still snap so a visible spin never gives a reposition away; the death
+lunge locks on instantly).
+
+Regenerate or restyle with `node tools/gen_stickmen.js` (needs
+`npm i three@0.128.0`). The original `smiler.glb` is kept untouched in
+`assets/models/entities/` — point ENTITY_MODELS back at it to restore it.
+
 ## 0a. Polish pass — high-quality image, artifacts as moments
 
 Researched against the Kane Pixels found-footage standard and shipped Backrooms
