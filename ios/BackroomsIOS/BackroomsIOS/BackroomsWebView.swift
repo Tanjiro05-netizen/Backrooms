@@ -1,0 +1,147 @@
+import SwiftUI
+import UIKit
+import WebKit
+import CoreMotion
+
+/// Hosts the existing locally bundled Three.js game. Native-only services are
+/// exposed deliberately through one message handler, rather than allowing the
+/// page to navigate to arbitrary web content.
+struct BackroomsWebView: UIViewRepresentable {
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.allowsInlineMediaPlayback = true
+        configuration.mediaTypesRequiringUserActionForPlayback = []
+        configuration.userContentController.add(context.coordinator, name: "backroomsNative")
+
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        view.isOpaque = true
+        view.backgroundColor = .black
+        view.scrollView.isScrollEnabled = false
+        view.scrollView.bounces = false
+        view.scrollView.contentInsetAdjustmentBehavior = .never
+        view.navigationDelegate = context.coordinator
+        view.allowsBackForwardNavigationGestures = false
+        context.coordinator.webView = view
+        context.coordinator.observeApplicationLifecycle()
+
+        guard let gameURL = Bundle.main.url(
+            forResource: "index", withExtension: "html", subdirectory: "web"
+        ) else {
+            assertionFailure("The bundled web/index.html game resource is missing.")
+            return view
+        }
+
+        // `web/index.html` refers to ../assets, so grant its parent bundle
+        // directory read access instead of granting access to the whole device.
+        view.loadFileURL(gameURL, allowingReadAccessTo: gameURL.deletingLastPathComponent().deletingLastPathComponent())
+        return view
+    }
+
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
+
+    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+        weak var webView: WKWebView?
+        private let motionManager = CMMotionManager()
+        private var lifecycleObservers: [NSObjectProtocol] = []
+
+        deinit {
+            motionManager.stopDeviceMotionUpdates()
+            lifecycleObservers.forEach(NotificationCenter.default.removeObserver)
+        }
+        func userContentController(
+            _ userContentController: WKUserContentController,
+            didReceive message: WKScriptMessage
+        ) {
+            guard message.name == "backroomsNative",
+                  let payload = message.body as? [String: Any],
+                  let type = payload["type"] as? String else { return }
+
+            switch type {
+            case "haptic":
+                playHaptic(pattern: payload["pattern"])
+            case "gyro":
+                setGyroEnabled(payload["enabled"] as? Bool ?? false)
+            default:
+                break
+            }
+        }
+
+        func observeApplicationLifecycle() {
+            guard lifecycleObservers.isEmpty else { return }
+            let center = NotificationCenter.default
+            lifecycleObservers.append(center.addObserver(
+                forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                self?.stopGyro()
+                self?.dispatchGameEvent("backrooms:nativePause")
+            })
+        }
+
+        private func playHaptic(pattern: Any?) {
+            let maximum = maxPatternValue(pattern)
+            let generator: UIFeedbackGenerator
+            if maximum >= 100 {
+                generator = UINotificationFeedbackGenerator()
+                (generator as? UINotificationFeedbackGenerator)?.notificationOccurred(.error)
+            } else if maximum >= 60 {
+                generator = UIImpactFeedbackGenerator(style: .heavy)
+                (generator as? UIImpactFeedbackGenerator)?.impactOccurred()
+            } else {
+                generator = UIImpactFeedbackGenerator(style: .light)
+                (generator as? UIImpactFeedbackGenerator)?.impactOccurred()
+            }
+            generator.prepare()
+        }
+
+        private func maxPatternValue(_ pattern: Any?) -> Int {
+            if let value = pattern as? NSNumber { return value.intValue }
+            if let values = pattern as? [NSNumber] { return values.map(\.intValue).max() ?? 0 }
+            return 0
+        }
+
+        private func setGyroEnabled(_ enabled: Bool) {
+            guard enabled, motionManager.isDeviceMotionAvailable else {
+                stopGyro()
+                return
+            }
+            guard !motionManager.isDeviceMotionActive else { return }
+
+            motionManager.deviceMotionUpdateInterval = 1.0 / 60.0
+            motionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: .main) { [weak self] motion, _ in
+                guard let rotation = motion?.rotationRate else { return }
+                // In landscape, pitch about the long axis feels like looking up/down;
+                // yaw is inverted so a rightward device turn looks right in-game.
+                self?.dispatchMotion(yaw: -rotation.y, pitch: rotation.x)
+            }
+        }
+
+        private func stopGyro() {
+            if motionManager.isDeviceMotionActive { motionManager.stopDeviceMotionUpdates() }
+        }
+
+        private func dispatchMotion(yaw: Double, pitch: Double) {
+            guard yaw.isFinite, pitch.isFinite else { return }
+            dispatchGameEvent(
+                "backrooms:nativeMotion",
+                detail: "{yaw:\(yaw),pitch:\(pitch),interval:\(motionManager.deviceMotionUpdateInterval)}"
+            )
+        }
+
+        private func dispatchGameEvent(_ name: String, detail: String? = nil) {
+            let detailExpression = detail.map { ",{detail:\($0)}" } ?? ""
+            webView?.evaluateJavaScript("window.dispatchEvent(new CustomEvent('\(name)'\(detailExpression)));")
+        }
+
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            // The shipped game is local. Open external links only in Safari.
+            if let url = navigationAction.request.url, !url.isFileURL, navigationAction.navigationType == .linkActivated {
+                UIApplication.shared.open(url)
+                decisionHandler(.cancel)
+                return
+            }
+            decisionHandler(.allow)
+        }
+    }
+}
