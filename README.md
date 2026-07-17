@@ -48,10 +48,13 @@ Backrooms/
 | W A S D | Move | Shift | Run |
 | Mouse | Look | E | Interact |
 | F | Camera light | N | Nightshot (IR) |
+| Q | Drink almond water | | |
 | **V** | **Cycle tape filter** (Clean · VHS · Heavy) | **B** | **Toggle 4:3 camcorder framing** |
 
-Filter, framing and render-quality are also on the **title screen** and persist
-between sessions.
+Filter, framing, render-quality and **gyro look** (mobile) are also on the
+**title screen** and persist between sessions. On phones the game runs with a
+virtual stick, drag-look (or gyro — physically aim the phone like the
+camcorder), and on-screen RUN / LIGHT / NV / USE / DRINK buttons.
 
 ## The two pipelines
 

@@ -1,5 +1,52 @@
 # Enhancements & Research Notes
 
+## 0. Intensity update — graphics, dread & gameplay (single-player)
+
+Aimed at the *Backrooms: Escape Together* bar, within a phone's budget.
+
+**Graphics**
+- **Baked ambient occlusion.** The floor and ceiling are single planes over the
+  whole map, so AO is baked per level into a canvas from the wall grid (soft
+  dark bands along every wall edge, radial pools under pillars) and sampled as
+  an `aoMap`. Walls get a matching contact-shadow gradient injected into the
+  standard shader (`addWallAO`). Corners and corridor edges now read as
+  *grounded* instead of floating CG.
+- **Two-cone flashlight.** A wide dim spill spot around the sharp hot spot —
+  and the lamp gutters when the battery is nearly dead.
+- **Adaptive resolution.** A rolling frame-time average rescales the internal
+  render buffer (0.55–1×) to hold frame rate; the VHS grain hides the upscale.
+  This is the lever that keeps iPhones at 60 when they thermal-throttle.
+- **three.js vendored locally** (`web/lib/`) — the game now runs fully offline,
+  a hard requirement for wrapping it as an iOS app.
+
+**Intensity**
+- **Nerve (sanity) system.** Darkness, blackouts, sightings and hits erode it;
+  light, tapes and almond water restore it. Low nerve bleeds into everything:
+  the VHS shader degrades, hands tremble, breathing and a heartbeat rise in the
+  mix, and the viewfinder starts showing you things that are not there.
+- **Horror director.** Between encounters it schedules ambient dread: distant
+  thuds several rooms away (stereo-panned), section blackouts with a power-down
+  whine, the 60 Hz hum simply *stopping*, false autofocus panics, whispers in
+  the static, and half-second silhouette glimpses.
+- **Entity upgrades.** Hunts are telegraphed ~1.3 s ahead (lights sag,
+  something exhales); during stalking phases the entity closes ground while
+  you are not looking (never while observed, never through your line of
+  sight); hunts grant an adrenaline stamina surge so you always get a chance
+  to run.
+
+**Gameplay**
+- **Items with randomized spawns:** camcorder batteries (+55% charge) and
+  almond water — carried, drunk with **[Q]** / DRINK for health + nerve.
+- New HUD: nerve bar, carry indicator, low-battery lamp behaviour.
+
+**Mobile / iOS**
+- **Gyro look** (title-screen toggle, iOS 13+ permission flow): aim the phone
+  like the camcorder; blends with drag-look.
+- Safe-area insets (`viewport-fit=cover` + `env(safe-area-inset-*)`) so
+  controls clear the notch/home indicator; haptic hooks on damage, hunts,
+  pickups and death (`navigator.vibrate` today — a no-op on iOS Safari, live
+  once wrapped natively).
+
 ## 1. VHS shader — rebuilt around the real analog signal path
 
 The previous shader did an RGB channel split + scanlines + grain. That reads as

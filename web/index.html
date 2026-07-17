@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>THE BACKROOMS // FOUND FOOTAGE</title>
 <style>
   :root{--osd:#f2f0e4;--rec:#ff2222;--nv:#7dffa0}
@@ -18,8 +18,9 @@
   @keyframes blink{50%{opacity:0}}
   #osdBatt{top:3.5%;right:4%;text-align:right}
   #osdBatt.low{color:#ff5544;animation:blink .6s steps(1) infinite}
-  #osdTime{bottom:4%;left:4%;line-height:1.55}
-  #osdMode{bottom:4%;right:4%;text-align:right;line-height:1.55}
+  #osdTime{bottom:calc(4% + env(safe-area-inset-bottom,0px));left:calc(4% + env(safe-area-inset-left,0px));line-height:1.55}
+  #osdMode{bottom:calc(4% + env(safe-area-inset-bottom,0px));right:calc(4% + env(safe-area-inset-right,0px));text-align:right;line-height:1.55}
+  #osdItem{bottom:calc(9.5% + env(safe-area-inset-bottom,0px));left:calc(4% + env(safe-area-inset-left,0px));color:#cfe8ff;display:none}
   #osdNV{top:8.5%;left:4%;color:var(--nv);display:none}
   #osdAF{top:3.5%;left:50%;transform:translateX(-50%);opacity:0;transition:opacity .15s}
   #osdExit{top:8.5%;left:50%;transform:translateX(-50%);color:#9dffb5;display:none;text-align:center}
@@ -48,6 +49,9 @@
   #stamWrap{position:fixed;bottom:11.5%;left:50%;transform:translateX(-50%);width:min(34vw,260px);height:5px;
     background:rgba(255,255,255,.12);z-index:20;opacity:0;transition:opacity .3s;pointer-events:none}
   #stamBar{height:100%;width:100%;background:rgba(242,240,228,.85);box-shadow:0 0 6px rgba(255,255,240,.5)}
+  #nrvWrap{position:fixed;bottom:10.4%;left:50%;transform:translateX(-50%);width:min(28vw,210px);height:3px;
+    background:rgba(255,255,255,.10);z-index:20;opacity:0;transition:opacity .3s;pointer-events:none}
+  #nrvBar{height:100%;width:100%;background:linear-gradient(90deg,#ffb84d,#ffe9b0);box-shadow:0 0 6px rgba(255,190,90,.55)}
   #hint{position:fixed;bottom:13.5%;left:50%;transform:translateX(-50%);color:rgba(242,240,228,.78);
     font-size:clamp(11px,1.25vw,15px);letter-spacing:.18em;font-weight:700;text-shadow:0 0 6px rgba(255,255,240,.4),0 0 2px #000;
     z-index:20;pointer-events:none;transition:opacity 1.2s;text-align:center;line-height:1.8;filter:blur(.3px)}
@@ -75,14 +79,15 @@
   #ovlRetry h1{color:#ffd9d9}
   .scan{position:absolute;inset:0;pointer-events:none;opacity:.5;background:repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px)}
   #touchUI{display:none;position:fixed;inset:0;z-index:30;pointer-events:none}
-  #stick{position:absolute;left:6%;bottom:8%;width:34vmin;height:34vmin;border:2px solid rgba(255,255,255,.18);border-radius:50%;pointer-events:auto}
+  #stick{position:absolute;left:calc(6% + env(safe-area-inset-left,0px));bottom:calc(8% + env(safe-area-inset-bottom,0px));width:34vmin;height:34vmin;border:2px solid rgba(255,255,255,.18);border-radius:50%;pointer-events:auto}
   #stickKnob{position:absolute;left:50%;top:50%;width:38%;height:38%;margin:-19% 0 0 -19%;border-radius:50%;background:rgba(255,255,255,.14);border:2px solid rgba(255,255,255,.25)}
   #lookZone{position:absolute;right:0;top:0;width:55%;height:100%;pointer-events:auto}
   .tbtn{position:absolute;pointer-events:auto;width:15vmin;height:15vmin;border-radius:50%;border:2px solid rgba(255,255,255,.25);
     background:rgba(255,255,255,.07);color:var(--osd);font-family:inherit;font-weight:700;letter-spacing:.05em;font-size:3vmin}
-  #btnRun{right:6%;bottom:26%}
-  #btnLight{right:24%;bottom:9%}
-  #btnNV{right:6%;bottom:9%}
+  #btnRun{right:calc(6% + env(safe-area-inset-right,0px));bottom:26%}
+  #btnLight{right:calc(24% + env(safe-area-inset-right,0px));bottom:calc(9% + env(safe-area-inset-bottom,0px))}
+  #btnNV{right:calc(6% + env(safe-area-inset-right,0px));bottom:calc(9% + env(safe-area-inset-bottom,0px))}
+  #btnHeal{right:calc(24% + env(safe-area-inset-right,0px));bottom:26%;color:#cfe8ff;display:none}
   /* ---- settings panel ---- */
   .settings{margin-top:2em;display:flex;flex-direction:column;gap:.9em;align-items:center}
   .setRow{display:flex;align-items:center;gap:.7em;flex-wrap:wrap;justify-content:center}
@@ -112,6 +117,8 @@
 <div id="exitArrow"><svg viewBox="0 0 100 100" width="100%" height="100%"><path d="M50 6 L82 62 L50 46 L18 62 Z" fill="#9dffb5"/></svg></div>
 <div id="hpWrap"><span id="hpLabel">HP</span><div id="hpBarBg"><div id="hpBar"></div></div></div>
 <div id="stamWrap"><div id="stamBar"></div></div>
+<div id="nrvWrap"><div id="nrvBar"></div></div>
+<div class="osd" id="osdItem">▮ ALMOND WATER — [Q] DRINK</div>
 <div id="hint"></div>
 <div class="osd" id="prompt" style="bottom:18%;left:50%;transform:translateX(-50%);display:none;color:#e8fff2"></div>
 
@@ -122,6 +129,7 @@
   <button class="tbtn" id="btnLight">LIGHT</button>
   <button class="tbtn" id="btnNV">NV</button>
   <button class="tbtn" id="btnUse" style="display:none;right:42%;bottom:10%">USE</button>
+  <button class="tbtn" id="btnHeal">DRINK</button>
 </div>
 
 <div class="ovl" id="ovlStart">
@@ -134,7 +142,7 @@
     THE LOBBY&nbsp;·&nbsp;HABITABLE ZONE&nbsp;·&nbsp;PIPE DREAMS&nbsp;·&nbsp;LEVEL 37: THE POOLROOMS<br>
     SOMETHING DIFFERENT LIVES ON EACH FLOOR.<br><br>
     <span style="opacity:.75">[W A S D] MOVE&nbsp;&nbsp;[MOUSE] LOOK&nbsp;&nbsp;[SHIFT] RUN<br>
-    [E] INTERACT&nbsp;&nbsp;[F] CAMERA LIGHT&nbsp;&nbsp;[N] NIGHTSHOT IR</span>
+    [E] INTERACT&nbsp;&nbsp;[F] CAMERA LIGHT&nbsp;&nbsp;[N] NIGHTSHOT IR&nbsp;&nbsp;[Q] DRINK</span>
   </div>
   <div class="btnrow">
     <button class="btn" id="btnPlay">► PLAY</button>
@@ -157,6 +165,12 @@
       <span class="setLabel">RENDER</span>
       <div class="seg" data-set="quality">
         <button data-val="0.6">GRIT</button><button data-val="0.8">STANDARD</button><button data-val="1">CRISP</button>
+      </div>
+    </div>
+    <div class="setRow" id="gyroRow" style="display:none">
+      <span class="setLabel">GYRO LOOK</span>
+      <div class="seg" data-set="gyro">
+        <button data-val="0">OFF</button><button data-val="1">ON</button>
       </div>
     </div>
     <div class="setHint">IN-GAME:&nbsp; [V] CYCLE FILTER&nbsp;&nbsp;·&nbsp;&nbsp;[B] TOGGLE 4:3</div>
@@ -202,10 +216,12 @@
   <button class="btn" onclick="location.reload()">◄◄ REWIND</button>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- three.js r128 is vendored locally so the game runs fully offline —
+     a hard requirement for wrapping it as an iOS app (no CDN at runtime). -->
+<script src="lib/three.min.js"></script>
 <!-- GLTFLoader (classic script, attaches THREE.GLTFLoader) — lets entities/props
      be swapped for Blender-authored .glb models. See assets/models/README.md -->
-<script src="https://unpkg.com/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="lib/GLTFLoader.js"></script>
 <script>
 /* GAME_SCRIPT_BEGIN */
 'use strict';
@@ -250,7 +266,7 @@ let levelIdx=0, LV=LEVELS[0];
    ========================================================= */
 const VHS_PRESETS={clean:0.0,vhs:0.6,heavy:1.0};
 const SETTINGS=(function(){
-  const d={preset:'vhs',vhs:VHS_PRESETS.vhs,crt43:false,quality:0.8,grain:1.0,bloom:0.9};
+  const d={preset:'vhs',vhs:VHS_PRESETS.vhs,crt43:false,quality:0.8,grain:1.0,bloom:0.9,gyro:false};
   try{const s=JSON.parse(localStorage.getItem('br_settings')||'{}');Object.assign(d,s);}catch(e){}
   d.vhs=VHS_PRESETS[d.preset]!==undefined?VHS_PRESETS[d.preset]:d.vhs;
   return d;
@@ -1214,6 +1230,52 @@ function geomFrom(A){
   g.computeBoundingSphere();
   return g;
 }
+/* ---------- baked ambient occlusion ----------
+   The floor and ceiling are each a single plane over the whole map, so AO
+   is baked into one canvas from the wall grid: every wall edge lays a soft
+   dark band, pillars a radial pool. Sampled through uv2 as an aoMap it
+   grounds the geometry — corners and corridor edges go dim while room
+   centres stay flat and fluorescent, which is exactly the liminal look. */
+function genAOMap(mirror){
+  const P=16,W=GW*P,H=GH*P;
+  const [c,x2]=makeCanvas(W,H);
+  x2.fillStyle='#fff';x2.fillRect(0,0,W,H);
+  x2.lineCap='round';
+  const passes=[[0.60,0.13],[0.38,0.17],[0.20,0.21],[0.09,0.24]];   /* [width(cells), alpha] */
+  const seg=(x0,y0,x1,y1)=>{
+    for(const [w,a] of passes){
+      x2.strokeStyle='rgba(0,0,0,'+a+')';x2.lineWidth=w*P;
+      x2.beginPath();x2.moveTo(x0*P,y0*P);x2.lineTo(x1*P,y1*P);x2.stroke();
+    }
+  };
+  for(let z=0;z<=GH;z++)for(let x=0;x<GW;x++){
+    const tp=hW(x,z);if(!tp)continue;
+    if(tp===1)seg(x,z,x+1,z);
+    else{seg(x,z,x+0.34,z);seg(x+0.66,z,x+1,z);}   /* doorway keeps the gap clear */
+  }
+  for(let z=0;z<GH;z++)for(let x=0;x<=GW;x++){
+    const tp=vW(x,z);if(!tp)continue;
+    if(tp===1)seg(x,z,x,z+1);
+    else{seg(x,z,x,z+0.34);seg(x,z+0.66,x,z+1);}
+  }
+  for(let z=0;z<GH;z++)for(let x=0;x<GW;x++){
+    if(!pillarMask[x+z*GW])continue;
+    const cxp=(x+0.5)*P,czp=(z+0.5)*P,r=Math.max(3,LV.pillarHalf/CS*P*3.4);
+    const g=x2.createRadialGradient(cxp,czp,r*0.15,cxp,czp,r);
+    g.addColorStop(0,'rgba(0,0,0,0.55)');g.addColorStop(1,'rgba(0,0,0,0)');
+    x2.fillStyle=g;x2.beginPath();x2.arc(cxp,czp,r,0,6.2832);x2.fill();
+  }
+  let src=c;
+  if(mirror){                                       /* ceiling plane flips v */
+    const [m,mx]=makeCanvas(W,H);
+    mx.translate(0,H);mx.scale(1,-1);mx.drawImage(c,0,0);
+    src=m;
+  }
+  const t=new THREE.CanvasTexture(src);
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping;
+  t.minFilter=THREE.LinearFilter;t.generateMipmaps=false;
+  return t;
+}
 function buildLevelWorld(){
   worldGroup=new THREE.Group();scene.add(worldGroup);
   const nCx=Math.ceil(GW/CHUNK);
@@ -1265,6 +1327,13 @@ function buildLevelWorld(){
   floor.rotation.x=-Math.PI/2;floor.receiveShadow=true;worldGroup.add(floor);
   const ceil=new THREE.Mesh(new THREE.PlaneGeometry(sizeX,sizeZ),mats.ceil);
   ceil.rotation.x=Math.PI/2;ceil.position.y=WH;ceil.receiveShadow=true;worldGroup.add(ceil);
+  /* bake AO from the wall grid into the floor/ceiling planes (aoMap reads uv2) */
+  floor.geometry.setAttribute('uv2',floor.geometry.attributes.uv);
+  ceil.geometry.setAttribute('uv2',ceil.geometry.attributes.uv);
+  if(mats.floor.aoMap)mats.floor.aoMap.dispose();
+  if(mats.ceil.aoMap)mats.ceil.aoMap.dispose();
+  mats.floor.aoMap=genAOMap(false);mats.floor.aoMapIntensity=0.8;mats.floor.needsUpdate=true;
+  mats.ceil.aoMap=genAOMap(true);mats.ceil.aoMapIntensity=0.65;mats.ceil.needsUpdate=true;
   if(LV.theme==='pool'){buildWater();buildStatue();}
 }
 function teardownWorld(){
@@ -1281,6 +1350,23 @@ function teardownWorld(){
 const themeCache={};
 function setRepeats(set,rep){set.map.repeat.set(rep,rep);set.normal.repeat.set(rep,rep);set.rough.repeat.set(rep,rep);}
 function stdMat(set){return new THREE.MeshStandardMaterial({map:set.map,normalMap:set.normal,roughnessMap:set.rough,roughness:1,metalness:0});}
+/* wall contact AO: darken ambient response toward the floor and ceiling
+   junctions (injected into the standard shader; uWallH tracks level height) */
+const WALL_AO_U={value:3.2};
+function addWallAO(m){
+  m.onBeforeCompile=sh=>{
+    sh.uniforms.uWallH=WALL_AO_U;
+    sh.vertexShader=sh.vertexShader
+      .replace('#include <common>','#include <common>\nvarying float vWy;')
+      .replace('#include <begin_vertex>','#include <begin_vertex>\nvWy=(modelMatrix*vec4(position,1.0)).y;');
+    sh.fragmentShader=sh.fragmentShader
+      .replace('#include <common>','#include <common>\nvarying float vWy;\nuniform float uWallH;')
+      .replace('#include <aomap_fragment>',
+        'float wao=1.0-0.30*exp(-vWy*2.4)-0.22*exp(-(uWallH-vWy)*2.0);\n'+
+        'reflectedLight.indirectDiffuse*=clamp(wao,0.35,1.0);\n'+
+        '#include <aomap_fragment>');
+  };
+}
 function getThemeMats(theme){
   if(themeCache[theme])return themeCache[theme];
   const aniso=Math.min(16,renderer.capabilities.getMaxAnisotropy());
@@ -1333,6 +1419,7 @@ function getThemeMats(theme){
   }
   out.panelFlicker=out.panel.clone();
   out.panelFlicker.userData.baseI=out.panel.userData.baseI;
+  addWallAO(out.wall);
   themeCache[theme]=out;
   return out;
 }
@@ -1348,7 +1435,8 @@ function applyFloorRepeats(){
    LIGHTING
    ========================================================= */
 const lightPool=[];
-let flashlight,flashTarget,ambL,hemiL,baseExposure=1.05,baseFog=0.052;
+let flashlight,flashSpill,flashTarget,ambL,hemiL,baseExposure=1.05,baseFog=0.052;
+let nearFixD=Infinity;   /* distance to nearest ceiling fixture (for the nerve system) */
 function initLighting(){
   scene.fog=new THREE.FogExp2(0x14100a,0.052);
   ambL=new THREE.AmbientLight(0x5b5440,0.5);scene.add(ambL);
@@ -1367,6 +1455,11 @@ function initLighting(){
   camera.add(flashlight);camera.add(flashTarget);
   flashlight.position.set(0.14,-0.07,0.05);
   flashlight.target=flashTarget;
+  /* wide dim spill cone around the hot spot — real camcorder lamps aren't a laser */
+  flashSpill=new THREE.SpotLight(0xffe6c0,0,17,1.02,0.95,2);
+  camera.add(flashSpill);
+  flashSpill.position.copy(flashlight.position);
+  flashSpill.target=flashTarget;
 }
 function applyEnv(){
   scene.fog.color.setHex(LV.fogC);
@@ -1387,6 +1480,7 @@ function updateLights(t,dt,globalFlick){
     if(d2<R*R)_near.push([d2,f]);
   }
   _near.sort((a,b)=>a[0]-b[0]);
+  nearFixD=_near.length?Math.sqrt(_near[0][0]):Infinity;
   for(let i=0;i<lightPool.length;i++){
     const L=lightPool[i];
     if(i<_near.length){
@@ -1409,10 +1503,11 @@ function updateLights(t,dt,globalFlick){
 let state='menu';
 let gameTime=0,deaths=0,tapesFound=0,levelTapes=0;
 let glitchPulse=0,vhsU=null,wasLocked=false;
+let blackoutT=0,glimpseT=0,humCutT=0;   /* horror-director timers */
 function glitchSpike(v){glitchPulse=Math.max(glitchPulse,v);}
 const DIFFS={
-  standard:{label:'STANDARD',hunt:1.0,sight:1.0,speed:1.0,huntTime:1.0,drain:1.0,creep:1.0,beaconAlways:false,dmg:34},
-  simple:{label:'SIMPLE',hunt:2.0,sight:1.7,speed:0.78,huntTime:0.65,drain:0.6,creep:0.5,beaconAlways:true,dmg:20}
+  standard:{label:'STANDARD',hunt:1.0,sight:1.0,speed:1.0,huntTime:1.0,drain:1.0,creep:1.0,beaconAlways:false,dmg:34,sanity:1.0},
+  simple:{label:'SIMPLE',hunt:2.0,sight:1.7,speed:0.78,huntTime:0.65,drain:0.6,creep:0.5,beaconAlways:true,dmg:20,sanity:0.45}
 };
 let diff=DIFFS.standard;
 const keys={};
@@ -1421,8 +1516,11 @@ const player={
   pos:new THREE.Vector3(0,EYE,0),
   yaw:-Math.PI/2,pitch:0,vx:0,vz:0,
   stamina:100,battery:100,lightOn:false,ir:false,bob:0,moveAmt:0,
-  health:100,maxHealth:100,hurtT:0,attackCD:0
+  health:100,maxHealth:100,hurtT:0,attackCD:0,
+  sanity:100,hasWater:false
 };
+/* haptic feedback — no-op where unsupported (iOS Safari); real buzz in a wrapped app / Android */
+function haptic(p){try{if(navigator.vibrate)navigator.vibrate(p);}catch(_){}}
 let hitFlash=0;   /* 0..1 red damage vignette */
 window.addEventListener('keydown',e=>{
   keys[e.code]=true;
@@ -1432,6 +1530,7 @@ window.addEventListener('keydown',e=>{
   if(e.code==='KeyF'){toggleLight();e.preventDefault();}
   if(e.code==='KeyN'){toggleNV();e.preventDefault();}
   if(e.code==='KeyE'){doInteract();e.preventDefault();}
+  if(e.code==='KeyQ'){drinkWater();e.preventDefault();}
   if(['KeyW','KeyA','KeyS','KeyD','ShiftLeft','ShiftRight','Space'].indexOf(e.code)>=0)e.preventDefault();
 });
 /* ---- settings application + UI ---- */
@@ -1457,6 +1556,7 @@ function refreshSettingsUI(){
   document.querySelectorAll('#settingsPanel .seg').forEach(seg=>{
     const key=seg.getAttribute('data-set');
     let cur=(key==='crt43')?(SETTINGS.crt43?'1':'0')
+      :(key==='gyro')?(SETTINGS.gyro?'1':'0')
       :(key==='quality')?String(SETTINGS.quality):String(SETTINGS[key]);
     seg.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.getAttribute('data-val')===cur));
   });
@@ -1468,6 +1568,7 @@ function initSettingsUI(){
       b.addEventListener('click',()=>{
         const v=b.getAttribute('data-val');
         if(key==='crt43')SETTINGS.crt43=(v==='1');
+        else if(key==='gyro'){SETTINGS.gyro=(v==='1');if(SETTINGS.gyro)requestGyroPermission();}
         else if(key==='quality')SETTINGS.quality=parseFloat(v);
         else SETTINGS[key]=v;
         applySettings();saveSettings();
@@ -1516,6 +1617,34 @@ window.addEventListener('mouseup',e=>{
   if(dragLook.moved<5&&!touch.active&&state==='play'){
     try{renderer.domElement.requestPointerLock();}catch(_){}
   }
+});
+/* --- gyro camcorder look (mobile) — physically aim the phone like the camera.
+   Integrates devicemotion rotationRate so it blends freely with drag-look;
+   iOS 13+ requires an explicit permission grant from a user gesture. --- */
+function requestGyroPermission(){
+  const DM=window.DeviceMotionEvent;
+  if(DM&&typeof DM.requestPermission==='function'){
+    DM.requestPermission().then(s=>{
+      if(s!=='granted'){SETTINGS.gyro=false;refreshSettingsUI();saveSettings();}
+    }).catch(()=>{SETTINGS.gyro=false;refreshSettingsUI();saveSettings();});
+  }
+}
+window.addEventListener('devicemotion',e=>{
+  if(!SETTINGS.gyro||state!=='play')return;
+  const r=e.rotationRate;
+  if(!r||r.beta==null)return;
+  /* rotationRate is deg/s; e.interval is ms on most engines, s on some — normalize */
+  let iv=e.interval||16;if(iv>1)iv/=1000;iv=Math.min(0.05,Math.max(0.004,iv));
+  const D=Math.PI/180;
+  const o=(screen.orientation&&typeof screen.orientation.angle==='number')
+    ?screen.orientation.angle:(window.orientation||0);
+  let dy,dp;                                  /* map device axes per screen orientation */
+  if(o===90){dy=r.beta;dp=r.gamma;}
+  else if(o===270||o===-90){dy=-r.beta;dp=-r.gamma;}
+  else if(o===180){dy=-r.gamma;dp=-r.beta;}
+  else{dy=r.gamma;dp=r.beta;}
+  player.yaw+=dy*D*iv;
+  player.pitch=Math.max(-1.45,Math.min(1.45,player.pitch+dp*D*iv));
 });
 function toggleLight(){
   if(player.battery<=1&&!player.lightOn)return;
@@ -1566,6 +1695,19 @@ function updatePlayer(dt){
   if(player.hurtT<=0&&player.health<player.maxHealth)          /* slow regen once clear of danger */
     player.health=Math.min(player.maxHealth,player.health+dt*4.5);
   if(player.hurtT<=0)shakeAmp=Math.max(0,shakeAmp-dt*6);
+  /* --- nerve (sanity): darkness and contact erode it, light restores it.
+     Low nerve feeds the VHS shader, breathing, heartbeat and hallucinations. */
+  {
+    let lit=player.lightOn||player.ir||(blackoutT<=0&&nearFixD<LV.poolD*0.8);
+    let dS=0;
+    if(!lit)dS-=1.1;
+    if(blackoutT>0)dS-=1.6;
+    if(entity&&entity.state==='hunt')dS-=2.6;
+    else if(entity&&entity.state==='seen'&&entity.mesh.visible)dS-=1.6;
+    else if(dS===0&&lit)dS=2.2;
+    player.sanity=Math.max(0,Math.min(100,
+      player.sanity+dS*dt*(dS<0?(diff.sanity||1):1)));
+  }
   if(spd>0.4){
     const prev=player.bob;
     player.bob+=dt*spd*(inWaterP?1.4:1.9);
@@ -1627,8 +1769,10 @@ function applyCamera(t,dt){
   const idle=(1-mv)*live;
   const brY=Math.sin(t*1.1)*0.006*idle;
   const brP=Math.sin(t*1.1+0.6)*0.004*idle;
-  const hy=Math.sin(t*0.9)*0.012+Math.sin(t*2.3+1.7)*0.007+Math.sin(t*5.1)*0.003;
-  const hp=Math.sin(t*1.1+4.0)*0.010+Math.sin(t*2.9)*0.006+Math.sin(t*6.3)*0.0025;
+  /* nerve tremor: unsteady hands once sanity dips low */
+  const nerve=live*Math.pow(Math.max(0,35-player.sanity)/35,1.5)*0.013;
+  const hy=Math.sin(t*0.9)*0.012+Math.sin(t*2.3+1.7)*0.007+Math.sin(t*5.1)*0.003+Math.sin(t*7.3)*nerve;
+  const hp=Math.sin(t*1.1+4.0)*0.010+Math.sin(t*2.9)*0.006+Math.sin(t*6.3)*0.0025+Math.sin(t*8.1)*nerve*0.7;
   const hr=Math.sin(t*0.7+2.0)*0.009+Math.sin(t*3.7)*0.004;
   const shx=(Math.random()-0.5)*shakeAmp;
   const shy=(Math.random()-0.5)*shakeAmp;
@@ -2028,6 +2172,12 @@ function updateEntity(dt,t){
   if(E.state==='idle'){
     E.nextSight-=dt;
     E.nextHunt-=dt;
+    /* hunt telegraph: the lights sag and something exhales ~1.3s before it drops in */
+    if(E.nextHunt<=1.4&&!E.telegraphed){
+      E.telegraphed=true;
+      blackoutT=Math.max(blackoutT,1.3);
+      growl();glitchSpike(0.5);
+    }
     if(E.nextHunt<=0)startHunt();
     else if(E.nextSight<=0){trySighting();E.nextSight=(9+lrng()*12)*diff.sight;}
     return;
@@ -2069,6 +2219,20 @@ function updateEntity(dt,t){
       }
       if(def.gazeVanish&&E.gaze>1.15){despawnEntity(true);return;}
     }else E.gaze=Math.max(0,E.gaze-dt*2);
+    /* stalker reposition: look away long enough and it closes ground while hidden */
+    if(!seen){
+      E.offT=(E.offT||0)+dt;
+      if(E.offT>2.3&&dist>7&&Math.random()<0.55){
+        E.offT=0;
+        const nxp=m.position.x+dx*0.30,nzp=m.position.z+dz*0.30;
+        const ncx=worldToCellX(nxp),ncz=worldToCellZ(nzp);
+        if(ncx>0&&ncz>0&&ncx<GW-1&&ncz<GH-1&&!pillarMask[ncx+ncz*GW]
+           &&!losClear(player.pos.x,player.pos.z,nxp,nzp)){
+          m.position.x=nxp;m.position.z=nzp;
+          staticBurst(0.14,0.10);
+        }
+      }
+    }else E.offT=0;
     if(dist<def.minDist||E.timer<=0)despawnEntity(false);
     return;
   }
@@ -2150,12 +2314,16 @@ function startHunt(){
   entity.mesh.position.set(cellWX(c[0]),0,cellWZ(c[1]));
   entity.mesh.visible=true;
   entity.state='hunt';entity.timer=entity.def.huntTime*diff.huntTime;entity.repath=0;entity.distField=df;entity.anim=0;
+  entity.telegraphed=false;
+  player.stamina=Math.max(player.stamina,70);   /* adrenaline — you always get a chance to run */
   glitchSpike(0.9);
+  haptic([70,50,70]);
   showMsg('—— THE SIGNAL IS SCREAMING. DO NOT STOP MOVING. ——',3200);
 }
 function despawnEntity(byGaze){
   entity.state='idle';
   entity.mesh.visible=false;
+  entity.telegraphed=false;
   if(byGaze)glitchSpike(0.8);
 }
 function scheduleHunt(d){entity.nextHunt=Math.min(entity.nextHunt,d);}
@@ -2176,6 +2344,17 @@ function findInteract(){
     if(dot<0.45&&d>1.0)continue;
     const s=2.3-d;
     if(s>score){score=s;best={type:'tape',ref:tp,label:'TAKE TAPE'};}
+  }
+  for(const it of items){
+    if(it.found)continue;
+    if(it.kind==='water'&&player.hasWater)continue;   /* hands full */
+    const dx=it.wx-player.pos.x,dz=it.wz-player.pos.z;
+    const d=Math.hypot(dx,dz);
+    if(d>2.1)continue;
+    const dot=(f.x*dx+f.z*dz)/Math.max(0.001,d);
+    if(dot<0.45&&d>1.0)continue;
+    const s=2.1-d;
+    if(s>score){score=s;best={type:'item',ref:it,label:it.kind==='battery'?'TAKE BATTERY':'TAKE ALMOND WATER'};}
   }
   if(exitObj&&!exitObj.opening){
     const dx=exitObj.wx-player.pos.x,dz=exitObj.wz-player.pos.z;
@@ -2207,6 +2386,7 @@ function updateInteract(){
 function doInteract(){
   if(state!=='play'||!interactCur)return;
   if(interactCur.type==='tape'){stepDip=Math.max(stepDip,0.06);pickupTape(interactCur.ref);}
+  else if(interactCur.type==='item'){stepDip=Math.max(stepDip,0.05);pickupItem(interactCur.ref);}
   else if(interactCur.type==='door')openDoor();
   interactCur=null;
 }
@@ -2252,17 +2432,20 @@ function hurtSound(){
 function damagePlayer(amt){
   if(state!=='play')return;
   player.health=Math.max(0,player.health-amt);
+  player.sanity=Math.max(0,player.sanity-8);
   player.hurtT=1.4;                       /* suppress regen briefly */
   hitFlash=Math.min(1,hitFlash+0.7);
   shakeAmp=Math.max(shakeAmp,0.055);
   glitchSpike(0.5);
   hurtSound();
+  haptic(90);
   if(player.health<=0)die();
 }
 let dying=null;
 function die(){
   if(state!=='play')return;
   deaths++;
+  haptic([120,60,200]);
   state='dying';
   const f=getCamForward();
   dying={t:0,
@@ -2330,7 +2513,9 @@ function retryLevel(){
   groundY=groundAt(player.pos.x,player.pos.z);
   player.battery=Math.max(player.battery,55);
   player.health=player.maxHealth;player.attackCD=0;player.hurtT=0;hitFlash=0;
-  entity.state='idle';entity.mesh.visible=false;
+  player.sanity=Math.max(player.sanity,75);
+  blackoutT=0;glimpseT=0;humCutT=0;
+  entity.state='idle';entity.mesh.visible=false;entity.telegraphed=false;
   entity.nextHunt=(20+lrng()*15)*diff.hunt;
   state='play';
   if(!touch.active){try{renderer.domElement.requestPointerLock();}catch(e){}}
@@ -2343,6 +2528,7 @@ function retryLevel(){
    ========================================================= */
 let AC=null,masterGain=null,droneGain=null,dronePan=null,droneTarget=0;
 let muffle=null,waterAmbGain=null,inWaterNow=false,muffleT=0;
+let humG1=null,humG2=null,breathGain=null,heartT=0;
 function initAudio(){
   if(AC)return;
   AC=new (window.AudioContext||window.webkitAudioContext)();
@@ -2363,8 +2549,14 @@ function initAudio(){
   const mkTone=(fq,gn)=>{
     const o=AC.createOscillator();o.type='sine';o.frequency.value=fq;
     const og=AC.createGain();og.gain.value=gn;o.connect(og);og.connect(masterGain);o.start();
+    return og;
   };
-  mkTone(120,0.012);mkTone(240,0.005);
+  humG1=mkTone(120,0.012);humG2=mkTone(240,0.005);
+  /* nervous-breathing loop — silent until nerve drops or stamina empties */
+  breathGain=AC.createGain();breathGain.gain.value=0;
+  const bsrc=AC.createBufferSource();bsrc.buffer=buf;bsrc.loop=true;bsrc.playbackRate.value=1.4;
+  const bbp=AC.createBiquadFilter();bbp.type='bandpass';bbp.frequency.value=520;bbp.Q.value=0.6;
+  bsrc.connect(bbp);bbp.connect(breathGain);breathGain.connect(masterGain);bsrc.start();
   droneGain=AC.createGain();droneGain.gain.value=0;
   const d1=AC.createOscillator();d1.type='sawtooth';d1.frequency.value=36;
   const d2=AC.createOscillator();d2.type='sawtooth';d2.frequency.value=36.7;
@@ -2384,6 +2576,68 @@ function noiseBurst(dur,gain,fc,q){
   const g=AC.createGain();g.gain.value=gain;
   s.connect(f);f.connect(g);g.connect(masterGain);
   s.start();
+}
+/* delayed + stereo-panned noise burst — the director's building block */
+function noiseAt(delay,dur,gain,fc,q,pan){
+  if(!AC)return;
+  const len=Math.max(8,Math.floor(AC.sampleRate*dur));
+  const buf=AC.createBuffer(1,len,AC.sampleRate),d=buf.getChannelData(0);
+  for(let i=0;i<len;i++)d[i]=(Math.random()*2-1)*(1-i/len);
+  const s=AC.createBufferSource();s.buffer=buf;
+  const f=AC.createBiquadFilter();f.type='bandpass';f.frequency.value=fc;f.Q.value=q||0.8;
+  const g=AC.createGain();g.gain.value=gain;
+  s.connect(f);f.connect(g);
+  if(AC.createStereoPanner){const p=AC.createStereoPanner();p.pan.value=pan||0;g.connect(p);p.connect(masterGain);}
+  else g.connect(masterGain);
+  s.start(AC.currentTime+(delay||0));
+}
+function whisper(){
+  if(!AC)return;
+  const side=Math.random()*2-1;
+  for(let i=0;i<3;i++)
+    noiseAt(i*0.21+Math.random()*0.08,0.16+Math.random()*0.2,0.030,
+      900+Math.random()*1200,3.2,side+(Math.random()-0.5)*0.4);
+}
+function growl(){
+  if(!AC)return;
+  const t0=AC.currentTime;
+  const o=AC.createOscillator();o.type='sawtooth';
+  o.frequency.setValueAtTime(46,t0);
+  o.frequency.exponentialRampToValueAtTime(29,t0+1.15);
+  const fl=AC.createBiquadFilter();fl.type='lowpass';fl.frequency.value=240;
+  const g=AC.createGain();
+  g.gain.setValueAtTime(0.0001,t0);
+  g.gain.exponentialRampToValueAtTime(0.20,t0+0.22);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+1.25);
+  o.connect(fl);fl.connect(g);g.connect(masterGain);
+  o.start(t0);o.stop(t0+1.3);
+  noiseBurst(0.6,0.10,170,0.8);
+}
+function powerDown(){
+  if(!AC)return;
+  const t0=AC.currentTime;
+  const o=AC.createOscillator();o.type='square';
+  o.frequency.setValueAtTime(110,t0);
+  o.frequency.exponentialRampToValueAtTime(26,t0+0.5);
+  const g=AC.createGain();
+  g.gain.setValueAtTime(0.06,t0);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+0.55);
+  const fl=AC.createBiquadFilter();fl.type='lowpass';fl.frequency.value=800;
+  o.connect(fl);fl.connect(g);g.connect(masterGain);
+  o.start(t0);o.stop(t0+0.6);
+}
+function thump(amp){
+  if(!AC)return;
+  const t0=AC.currentTime;
+  const o=AC.createOscillator();o.type='sine';
+  o.frequency.setValueAtTime(58,t0);
+  o.frequency.exponentialRampToValueAtTime(38,t0+0.11);
+  const g=AC.createGain();
+  g.gain.setValueAtTime(0.0001,t0);
+  g.gain.exponentialRampToValueAtTime(amp,t0+0.015);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+0.13);
+  o.connect(g);g.connect(masterGain);
+  o.start(t0);o.stop(t0+0.15);
 }
 function footstep(run){noiseBurst(0.09,run?0.34:0.20,520+Math.random()*320,0.9);}
 function staticBurst(dur,gain){noiseBurst(dur,gain,2400,0.25);}
@@ -2464,6 +2718,94 @@ function updateAudio(dt){
     const wob=0.75+0.25*Math.sin(AC.currentTime*0.8)+0.08*Math.sin(AC.currentTime*2.7);
     waterAmbGain.gain.value+=((wading?0.055*wob:0)-waterAmbGain.gain.value)*Math.min(1,dt*4);
   }
+  /* the fluorescent hum ducks out during blackouts and hum-cut scares —
+     sudden silence in the Backrooms is louder than any sting */
+  humCutT=Math.max(0,humCutT-dt);
+  const humOn=(blackoutT<=0&&humCutT<=0)?1:0.05;
+  if(humG1)humG1.gain.value+=(0.012*humOn-humG1.gain.value)*Math.min(1,dt*6);
+  if(humG2)humG2.gain.value+=(0.005*humOn-humG2.gain.value)*Math.min(1,dt*6);
+  /* heartbeat + breathing from danger and nerve */
+  if(state==='play'){
+    const sanEff=Math.max(0,(100-player.sanity))/100;
+    let danger=0;
+    if(entity&&entity.state==='hunt'&&entity.mesh.visible){
+      const d=Math.hypot(player.pos.x-entity.mesh.position.x,player.pos.z-entity.mesh.position.z);
+      danger=Math.max(0,1-d/22);
+    }
+    const heartAmt=Math.min(1,Math.max(danger,(sanEff-0.35)*1.1));
+    if(heartAmt>0.06){
+      heartT-=dt;
+      if(heartT<=0){
+        heartT=60/(50+heartAmt*88);
+        thump(0.10+heartAmt*0.30);
+        setTimeout(()=>thump(0.07+heartAmt*0.18),150);
+      }
+    }
+    if(breathGain){
+      const bT=(sanEff>0.45?(sanEff-0.45)*0.55:0)+(player.stamina<18?0.20:0);
+      const cyc=0.55+0.45*Math.sin(AC.currentTime*(2.4+sanEff*2.2));
+      breathGain.gain.value+=(bT*cyc-breathGain.gain.value)*Math.min(1,dt*5);
+    }
+  }else if(breathGain)breathGain.gain.value*=Math.max(0,1-dt*4);
+}
+/* =========================================================
+   HORROR DIRECTOR — ambient dread between encounters
+   ========================================================= */
+const director={next:18};
+function updateDirector(dt,t){
+  if(blackoutT>0)blackoutT=Math.max(0,blackoutT-dt);
+  if(glimpseT>0){
+    glimpseT-=dt;
+    if(glimpseT<=0&&entity&&entity.state==='idle')entity.mesh.visible=false;
+  }
+  if(!entity||entity.state!=='idle')return;   /* only whisper while it's calm */
+  director.next-=dt;
+  if(director.next>0)return;
+  const sanEff=Math.max(0,(100-player.sanity))/100;
+  director.next=(15+lrng()*22)*(1-sanEff*0.45);
+  const r=Math.random();
+  if(r<0.20){                                  /* something big, several rooms away */
+    const pan=Math.random()*2-1,n=2+Math.floor(Math.random()*3);
+    for(let i=0;i<n;i++)noiseAt(i*0.38+Math.random()*0.1,0.22,0.15,85+Math.random()*40,0.8,pan);
+  }else if(r<0.34){                            /* section blackout */
+    blackoutT=1.8+Math.random()*2.2;
+    powerDown();glitchSpike(0.3);
+  }else if(r<0.48){                            /* the hum just... stops */
+    humCutT=2.5+Math.random()*2;
+  }else if(r<0.60){                            /* camcorder panics about nothing */
+    elAF.style.opacity=1;clickSnd();glitchSpike(0.3);
+    if(vhsU)vhsU.dropout.value=Math.max(vhsU.dropout.value,0.8);
+    setTimeout(()=>{elAF.style.opacity=0;},700);
+  }else if(r<0.76){                            /* voices in the static */
+    whisper();
+    player.sanity=Math.max(0,player.sanity-3);
+  }else if(r<0.90){                            /* half-seen silhouette — gone when you blink */
+    if(glimpse())player.sanity=Math.max(0,player.sanity-5);
+  }else creak();
+}
+/* place the entity in view for a fraction of a second, then gone. At low
+   nerve these fire more often — you stop trusting the viewfinder. */
+function glimpse(){
+  if(!entity||entity.state!=='idle'||glimpseT>0)return false;
+  const f=getCamForward();
+  for(let tr=0;tr<40;tr++){
+    const ang=(lrng()*2-1)*0.9;
+    const dW=9+lrng()*14;
+    const ca=Math.cos(ang),sa=Math.sin(ang);
+    const dirx=f.x*ca-f.z*sa,dirz=f.x*sa+f.z*ca;
+    const wx=player.pos.x+dirx*dW,wz=player.pos.z+dirz*dW;
+    const cx=worldToCellX(wx),cz=worldToCellZ(wz);
+    if(cx<1||cz<1||cx>=GW-1||cz>=GH-1)continue;
+    if(pillarMask[cx+cz*GW])continue;
+    if(!losClear(player.pos.x,player.pos.z,wx,wz))continue;
+    entity.mesh.position.set(wx,0,wz);
+    entity.mesh.rotation.y=Math.atan2(-(player.pos.x-wx),-(player.pos.z-wz));
+    entity.mesh.visible=true;
+    glimpseT=0.35+Math.random()*0.3;
+    staticBurst(0.22,0.18);glitchSpike(0.45);
+    return true;
+  }
+  return false;
 }
 /* ---------- touch ---------- */
 function setupTouch(){
@@ -2511,6 +2853,7 @@ function setupTouch(){
   btn('btnLight',()=>toggleLight());
   btn('btnNV',()=>toggleNV());
   btn('btnUse',()=>doInteract());
+  btn('btnHeal',()=>drinkWater());
 }
 /* PART3_END */
 /* =========================================================
@@ -2584,11 +2927,109 @@ function pickupTape(tp){
   tp.found=true;tp.g.visible=false;
   tapesFound++;levelTapes++;
   player.battery=Math.min(100,player.battery+22);
+  player.sanity=Math.min(100,player.sanity+12);
   staticBurst(0.45,0.5);
   glitchSpike(0.6);
+  haptic(30);
   showMsg('TAPE 0'+tapesFound+' RECOVERED — "'+TAPE_LINES[tapesFound-1]+'"',5400);
   scheduleHunt((2+lrng()*3)*diff.hunt);
   if(levelTapes===LV.tapes)relocateExit();
+  forceHud();
+}
+/* =========================================================
+   ITEMS — camcorder batteries & almond water
+   ========================================================= */
+const items=[];
+function clearItems(){
+  for(const it of items){
+    it.g.traverse(o=>{if(o.geometry)o.geometry.dispose();});
+    scene.remove(it.g);
+  }
+  items.length=0;
+}
+function buildItems(){
+  clearItems();
+  const df=bfsFrom(SPAWN_CX,SPAWN_CZ);
+  const cands=[];
+  for(let z=1;z<GH-1;z++)for(let x=1;x<GW-1;x++){
+    const d=df[x+z*GW];
+    if(d<5||pillarMask[x+z*GW])continue;
+    if(LV.theme==='pool'&&zoneMask[x+z*GW])continue;
+    cands.push([x,z]);
+  }
+  const take=()=>{
+    if(!cands.length)return null;
+    return cands.splice(Math.floor(lrng()*cands.length),1)[0];
+  };
+  const nB=2,nW=1+(levelIdx>=2?1:0);
+  for(let i=0;i<nB;i++){
+    const c=take();if(!c)break;
+    items.push(makeItem('battery',cellWX(c[0])+(lrng()-0.5)*2,cellWZ(c[1])+(lrng()-0.5)*2));
+  }
+  for(let i=0;i<nW;i++){
+    const c=take();if(!c)break;
+    items.push(makeItem('water',cellWX(c[0])+(lrng()-0.5)*2,cellWZ(c[1])+(lrng()-0.5)*2));
+  }
+}
+function makeItem(kind,wx,wz){
+  const g=new THREE.Group();
+  let led=null;
+  if(kind==='battery'){
+    const body=new THREE.Mesh(new THREE.BoxGeometry(0.075,0.15,0.05),
+      new THREE.MeshStandardMaterial({color:0x1a1c1e,roughness:0.55,metalness:0.1}));
+    body.position.y=0.075;
+    const stripe=new THREE.Mesh(new THREE.BoxGeometry(0.078,0.03,0.053),
+      new THREE.MeshStandardMaterial({color:0x0a0a0a,emissive:0xffaa22,emissiveIntensity:1.6}));
+    stripe.position.y=0.115;
+    g.add(body,stripe);
+    led=stripe.material;
+    body.castShadow=true;
+  }else{
+    const bottle=new THREE.Mesh(new THREE.CylinderGeometry(0.045,0.05,0.22,10),
+      new THREE.MeshStandardMaterial({color:0xdfe8ea,roughness:0.35,metalness:0,
+        emissive:0x8fb2c4,emissiveIntensity:0.22,transparent:true,opacity:0.92}));
+    bottle.position.y=0.11;
+    const cap=new THREE.Mesh(new THREE.CylinderGeometry(0.028,0.028,0.035,8),
+      new THREE.MeshStandardMaterial({color:0x24282a,roughness:0.6}));
+    cap.position.y=0.238;
+    g.add(bottle,cap);
+    bottle.castShadow=true;
+  }
+  g.position.set(wx,groundAt(wx,wz),wz);
+  g.rotation.y=lrng()*6.28;
+  scene.add(g);
+  return {g,led,kind,wx,wz,found:false};
+}
+function updateItems(dt,t){
+  for(const it of items){
+    if(it.found)continue;
+    if(it.led)it.led.emissiveIntensity=(Math.sin(t*5+it.wx)>0.5)?2.0:0.5;
+    else it.g.rotation.y+=dt*0.6;
+  }
+}
+function pickupItem(it){
+  it.found=true;it.g.visible=false;
+  if(it.kind==='battery'){
+    player.battery=Math.min(100,player.battery+55);
+    clickSnd();staticBurst(0.2,0.25);
+    showMsg('BATTERY SWAPPED — CHARGE '+Math.ceil(player.battery)+'%',3200);
+  }else{
+    player.hasWater=true;
+    clickSnd();
+    showMsg('ALMOND WATER — SMELLS LIKE SAFETY. [Q] TO DRINK.',3800);
+  }
+  haptic(20);
+  forceHud();
+}
+function drinkWater(){
+  if(state!=='play'||!player.hasWater)return;
+  player.hasWater=false;
+  player.health=Math.min(player.maxHealth,player.health+45);
+  player.sanity=Math.min(100,player.sanity+35);
+  noiseBurst(0.28,0.18,420,0.9);noiseBurst(0.1,0.08,900,1.4);
+  glitchSpike(0.2);
+  haptic(12);
+  showMsg('THE STATIC QUIETS. THE WALLS HUM A LITTLE SOFTER.',3600);
   forceHud();
 }
 let exitObj=null;
@@ -2815,8 +3256,9 @@ function buildLevel(i){
   GW=LV.grid;GH=LV.grid;CS=LV.cs;WH=LV.wh;UVS=LV.uvs;
   VVS=(LV.theme==='pool')?1.5:WH;
   SPAWN_CX=Math.max(3,Math.round(GW*0.16));SPAWN_CZ=GH>>1;
-  clearTapes();clearExit();
+  clearTapes();clearItems();clearExit();
   teardownWorld();
+  WALL_AO_U.value=WH;
   allocMap();
   generateMap();
   mats=getThemeMats(LV.theme);
@@ -2826,6 +3268,7 @@ function buildLevel(i){
   buildEntity(LV.entity);
   levelTapes=0;
   buildTapes(LV.tapes);
+  buildItems();
   placeExitFar();
   buildWallArrows();
   player.pos.set(cellWX(SPAWN_CX),EYE,cellWZ(SPAWN_CZ));
@@ -2834,6 +3277,8 @@ function buildLevel(i){
   groundY=groundAt(player.pos.x,player.pos.z);
   player.battery=Math.min(100,player.battery+25);
   player.health=player.maxHealth;player.attackCD=0;player.hurtT=0;hitFlash=0;
+  player.sanity=Math.max(player.sanity,70);   /* the descent steadies the hands a little */
+  blackoutT=0;glimpseT=0;humCutT=0;director.next=18+lrng()*10;
 }
 function descend(){
   if(state!=='play')return;
@@ -3037,9 +3482,22 @@ function makePassScene(frag,uniforms){
 }
 function renderSize(){
   const pr=Math.min(window.devicePixelRatio||1,1.75);
+  const q=SETTINGS.quality*adaptScale;
   return new THREE.Vector2(
-    Math.max(2,Math.floor(window.innerWidth*pr*SETTINGS.quality)),
-    Math.max(2,Math.floor(window.innerHeight*pr*SETTINGS.quality)));
+    Math.max(2,Math.floor(window.innerWidth*pr*q)),
+    Math.max(2,Math.floor(window.innerHeight*pr*q)));
+}
+/* adaptive resolution: hold frame rate by rescaling the internal buffer.
+   The VHS grain hides the upscale, so dropping res is invisible — while a
+   phone that thermal-throttles into 20fps very much is not. */
+let adaptScale=1,adaptEma=1/60,adaptT=3;
+function adaptTick(dt){
+  adaptEma+=(dt-adaptEma)*0.04;
+  adaptT-=dt;
+  if(adaptT>0||state!=='play')return;
+  adaptT=1.8;
+  if(adaptEma>1/40&&adaptScale>0.55){adaptScale=Math.max(0.55,adaptScale-0.12);onResize();}
+  else if(adaptEma<1/56&&adaptScale<1){adaptScale=Math.min(1,adaptScale+0.06);onResize();}
 }
 function setupPost(){
   const s=renderSize();
@@ -3066,6 +3524,7 @@ function setupPost(){
    ========================================================= */
 let elBatt,elTime,elMode,elMsg,elStamW,elStamB,elAF,elHint;
 let elHpW,elHpB,elThreat,elThreatTxt,elHit,elArrow;
+let elNrvW,elNrvB,elItem,elHeal;
 let hudT=0,afT=10,msgTimer=null;
 function bindUI(){
   elBatt=document.getElementById('osdBatt');
@@ -3082,6 +3541,11 @@ function bindUI(){
   elThreatTxt=document.getElementById('threatTxt');
   elHit=document.getElementById('hitFlash');
   elArrow=document.getElementById('exitArrow');
+  elNrvW=document.getElementById('nrvWrap');
+  elNrvB=document.getElementById('nrvBar');
+  elItem=document.getElementById('osdItem');
+  elHeal=document.getElementById('btnHeal');
+  document.getElementById('gyroRow').style.display=touch.active?'flex':'none';
   document.getElementById('btnPlay').addEventListener('click',()=>startGame('standard'));
   document.getElementById('btnPlaySimple').addEventListener('click',()=>startGame('simple'));
   document.getElementById('btnResume').addEventListener('click',resumeGame);
@@ -3103,9 +3567,11 @@ function startGame(mode){
   if(AC&&AC.resume)AC.resume();
   document.getElementById('ovlStart').style.display='none';
   state='play';
+  player.sanity=100;player.hasWater=false;
+  if(SETTINGS.gyro)requestGyroPermission();   /* re-ask inside the tap gesture if needed */
   elHint.innerHTML=touch.active
     ?'LEFT STICK — MOVE&nbsp;&nbsp;·&nbsp;&nbsp;DRAG RIGHT — LOOK&nbsp;&nbsp;·&nbsp;&nbsp;USE — INTERACT'
-    :'[W A S D] MOVE&nbsp;&nbsp;·&nbsp;&nbsp;DRAG MOUSE / TRACKPAD — LOOK&nbsp;&nbsp;·&nbsp;&nbsp;CLICK — LOCK MOUSE&nbsp;&nbsp;·&nbsp;&nbsp;[SHIFT] RUN&nbsp;&nbsp;[E] USE&nbsp;&nbsp;[F] LIGHT&nbsp;&nbsp;[N] IR';
+    :'[W A S D] MOVE&nbsp;&nbsp;·&nbsp;&nbsp;DRAG MOUSE / TRACKPAD — LOOK&nbsp;&nbsp;·&nbsp;&nbsp;CLICK — LOCK MOUSE&nbsp;&nbsp;·&nbsp;&nbsp;[SHIFT] RUN&nbsp;&nbsp;[E] USE&nbsp;&nbsp;[Q] DRINK&nbsp;&nbsp;[F] LIGHT&nbsp;&nbsp;[N] IR';
   elHint.style.opacity=1;
   setTimeout(()=>{elHint.style.opacity=0;},9000);
   showMsg(LV.intro,5600);
@@ -3152,6 +3618,15 @@ function hudTick(dt){
   const inGame=(state==='play'||state==='dying');
   elHpW.style.opacity=inGame?1:0;
   elHpB.style.width=Math.max(0,player.health/player.maxHealth*100)+'%';
+  /* nerve bar — surfaces once composure starts to go */
+  elNrvW.style.opacity=(inGame&&player.sanity<96)?1:0;
+  elNrvB.style.width=Math.max(0,player.sanity)+'%';
+  elNrvB.style.background=player.sanity<30
+    ?'linear-gradient(90deg,#ff4d3a,#ff9d6b)':'linear-gradient(90deg,#ffb84d,#ffe9b0)';
+  /* almond water carry indicator */
+  const carrying=state==='play'&&player.hasWater;
+  elItem.style.display=carrying&&!touch.active?'block':'none';
+  if(elHeal)elHeal.style.display=carrying&&touch.active?'block':'none';
   /* threat ticker: countdown to next spawn, contact, or active hunt */
   if(state==='play'&&entity){
     elThreat.style.display='flex';
@@ -3207,7 +3682,9 @@ function loop(now){
     updatePlayer(dt);
     updateEntity(dt,t);
     updateTapes(dt,t);
+    updateItems(dt,t);
     updateExit(dt);
+    updateDirector(dt,t);
   }
   if(state==='menu')player.yaw+=dt*0.05;
   if(state==='dying'){gameTime+=dt;updateDying(dt,t);}
@@ -3232,8 +3709,10 @@ function loop(now){
   vhsU.ir.value+=((player.ir?1:0)-vhsU.ir.value)*Math.min(1,dt*10);
   vhsU.lowbatt.value=player.battery<15?1:0;
   vhsU.heat.value+=((LV.heat||0)-vhsU.heat.value)*Math.min(1,dt*3);
-  /* live-driven settings + animated tape dropout */
-  vhsU.intensity.value=SETTINGS.vhs;
+  /* live-driven settings + animated tape dropout.
+     Low nerve bleeds into the tape — the recording degrades with the operator. */
+  const sanFx=(state==='play'||state==='dying')?Math.max(0,100-player.sanity)/100:0;
+  vhsU.intensity.value=Math.min(1.25,SETTINGS.vhs+sanFx*sanFx*0.42);
   vhsU.aspect43.value=SETTINGS.crt43?1:0;
   vhsU.bloomAmt.value=SETTINGS.bloom;
   vhsU.dropout.value=Math.max(0,vhsU.dropout.value-dt*2.2);
@@ -3245,12 +3724,16 @@ function loop(now){
   }
   renderer.toneMappingExposure=baseExposure+vhsU.ir.value*1.65;
   scene.fog.density=baseFog*(1-0.38*vhsU.ir.value);
-  const globalFlick=(entity&&entity.state==='hunt')
+  let globalFlick=(entity&&entity.state==='hunt')
     ?((Math.sin(t*31)>-0.2)?1:0.25)*(Math.random()>0.06?1:0.3)
     :1;
+  if(blackoutT>0)globalFlick*=(Math.random()<0.05?0.45:0.06);   /* section blackout */
   updateLights(t,dt,globalFlick);
   const lightWanted=player.lightOn&&state!=='menu'&&state!=='transition';
-  flashlight.intensity+=((lightWanted?2.6:0)-flashlight.intensity)*Math.min(1,dt*14);
+  /* the lamp gutters when the battery is dying */
+  const lampFlick=(player.battery<12&&player.battery>0)?(Math.random()<0.09?0.35:1):1;
+  flashlight.intensity+=(((lightWanted?2.6:0)*lampFlick)-flashlight.intensity)*Math.min(1,dt*14);
+  if(flashSpill)flashSpill.intensity=flashlight.intensity*0.42;
   const fovT=(state==='play'&&(keys['ShiftLeft']||keys['ShiftRight']||touch.run)&&player.moveAmt>3.6)?77.5:72;
   if(Math.abs(camera.fov-fovT)>0.05){
     camera.fov+=(fovT-camera.fov)*Math.min(1,dt*5);
@@ -3258,6 +3741,7 @@ function loop(now){
   }
   applyCamera(t,dt);
   hudTick(dt);
+  adaptTick(dt);
   renderer.setRenderTarget(rt);
   renderer.render(scene,camera);
   renderer.setRenderTarget(rtBright);
