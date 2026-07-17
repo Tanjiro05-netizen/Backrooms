@@ -1519,8 +1519,25 @@ const player={
   health:100,maxHealth:100,hurtT:0,attackCD:0,
   sanity:100,hasWater:false
 };
-/* haptic feedback — no-op where unsupported (iOS Safari); real buzz in a wrapped app / Android */
-function haptic(p){try{if(navigator.vibrate)navigator.vibrate(p);}catch(_){}}
+/* Native-shell bridge. Every call remains optional, so the standalone browser
+   version keeps working unchanged. The iOS host intentionally accepts only
+   explicit message types rather than exposing arbitrary native evaluation. */
+function nativePost(type,payload){
+  try{
+    const native=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.backroomsNative;
+    if(native)native.postMessage(Object.assign({type},payload||{}));
+    return !!native;
+  }catch(_){return false;}
+}
+const IS_NATIVE_SHELL=!!(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.backroomsNative);
+/* Haptic feedback: browsers use vibration where available; the iOS app shell
+   receives the same intent through WKScriptMessageHandler. */
+function haptic(p){
+  try{
+    if(navigator.vibrate)navigator.vibrate(p);
+    nativePost('haptic',{pattern:p});
+  }catch(_){}
+}
 let hitFlash=0;   /* 0..1 red damage vignette */
 window.addEventListener('keydown',e=>{
   keys[e.code]=true;
@@ -1568,7 +1585,11 @@ function initSettingsUI(){
       b.addEventListener('click',()=>{
         const v=b.getAttribute('data-val');
         if(key==='crt43')SETTINGS.crt43=(v==='1');
-        else if(key==='gyro'){SETTINGS.gyro=(v==='1');if(SETTINGS.gyro)requestGyroPermission();}
+        else if(key==='gyro'){
+          SETTINGS.gyro=(v==='1');
+          if(SETTINGS.gyro)requestGyroPermission();
+          syncNativeGyro();
+        }
         else if(key==='quality')SETTINGS.quality=parseFloat(v);
         else SETTINGS[key]=v;
         applySettings();saveSettings();
@@ -1622,6 +1643,7 @@ window.addEventListener('mouseup',e=>{
    Integrates devicemotion rotationRate so it blends freely with drag-look;
    iOS 13+ requires an explicit permission grant from a user gesture. --- */
 function requestGyroPermission(){
+  if(IS_NATIVE_SHELL)return; /* Core Motion is supplied by the app shell. */
   const DM=window.DeviceMotionEvent;
   if(DM&&typeof DM.requestPermission==='function'){
     DM.requestPermission().then(s=>{
@@ -1629,8 +1651,13 @@ function requestGyroPermission(){
     }).catch(()=>{SETTINGS.gyro=false;refreshSettingsUI();saveSettings();});
   }
 }
+function syncNativeGyro(){nativePost('gyro',{enabled:!!SETTINGS.gyro});}
+function applyGyroDelta(dy,dp,iv){
+  player.yaw+=dy*iv;
+  player.pitch=Math.max(-1.45,Math.min(1.45,player.pitch+dp*iv));
+}
 window.addEventListener('devicemotion',e=>{
-  if(!SETTINGS.gyro||state!=='play')return;
+  if(IS_NATIVE_SHELL||!SETTINGS.gyro||state!=='play')return;
   const r=e.rotationRate;
   if(!r||r.beta==null)return;
   /* rotationRate is deg/s; e.interval is ms on most engines, s on some — normalize */
@@ -1643,8 +1670,18 @@ window.addEventListener('devicemotion',e=>{
   else if(o===270||o===-90){dy=-r.beta;dp=-r.gamma;}
   else if(o===180){dy=-r.gamma;dp=-r.beta;}
   else{dy=r.gamma;dp=r.beta;}
-  player.yaw+=dy*D*iv;
-  player.pitch=Math.max(-1.45,Math.min(1.45,player.pitch+dp*D*iv));
+  applyGyroDelta(dy*D,dp*D,iv);
+});
+/* Native Core Motion uses radians/second and sends a calibrated delta stream.
+   It avoids WebKit's device-motion permission differences while retaining the
+   exact same in-game gyro toggle and drag-look blending. */
+window.addEventListener('backrooms:nativeMotion',e=>{
+  if(!SETTINGS.gyro||state!=='play')return;
+  const d=e.detail||{},iv=Math.min(0.05,Math.max(0.004,Number(d.interval)||1/60));
+  applyGyroDelta(Number(d.yaw)||0,Number(d.pitch)||0,iv);
+});
+window.addEventListener('backrooms:nativePause',()=>{
+  if(state==='play'){showPause(true);if(AC&&AC.suspend)AC.suspend();}
 });
 function toggleLight(){
   if(player.battery<=1&&!player.lightOn)return;
@@ -3610,6 +3647,7 @@ function startGame(mode){
   state='play';
   player.sanity=100;player.hasWater=false;
   if(SETTINGS.gyro)requestGyroPermission();   /* re-ask inside the tap gesture if needed */
+  syncNativeGyro();
   elHint.innerHTML=touch.active
     ?'LEFT STICK — MOVE&nbsp;&nbsp;·&nbsp;&nbsp;DRAG RIGHT — LOOK&nbsp;&nbsp;·&nbsp;&nbsp;USE — INTERACT'
     :'[W A S D] MOVE&nbsp;&nbsp;·&nbsp;&nbsp;DRAG MOUSE / TRACKPAD — LOOK&nbsp;&nbsp;·&nbsp;&nbsp;CLICK — LOCK MOUSE&nbsp;&nbsp;·&nbsp;&nbsp;[SHIFT] RUN&nbsp;&nbsp;[E] USE&nbsp;&nbsp;[Q] DRINK&nbsp;&nbsp;[F] LIGHT&nbsp;&nbsp;[N] IR';
@@ -3624,6 +3662,8 @@ function showPause(on){
 function resumeGame(){
   showPause(false);
   state='play';
+  if(AC&&AC.resume)AC.resume();
+  syncNativeGyro();
 }
 function showMsg(txt,ms){
   elMsg.textContent='▮ '+txt+' ▮';

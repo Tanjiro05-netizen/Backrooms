@@ -29,6 +29,14 @@ Backrooms/
 └── backrooms_found_footagev3.html ← original, untouched (backup)
 ```
 
+## Native iOS app (landscape)
+
+`ios/BackroomsIOS/` is the starting native delivery target: a landscape-only
+SwiftUI/WKWebView app that bundles this game's `web/` and `assets/` folders
+locally and forwards gameplay haptic intents to iOS. Open
+`ios/BackroomsIOS/BackroomsIOS.xcodeproj` in Xcode on a Mac; see
+[`ios/README.md`](ios/README.md) for signing and run instructions.
+
 ## Run the web game
 
 - **Quick:** double-click `web/index.html`. Runs fully; uses the built-in
