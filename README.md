@@ -48,6 +48,12 @@ locally and forwards gameplay haptic intents to iOS. Open
   python3 -m http.server 8123
   # open http://localhost:8123/web/index.html
   ```
+- **On iPhone/iPad:** open the served URL in Safari → Share → **Add to Home
+  Screen**. The game installs as a fullscreen landscape app with its own icon
+  and — thanks to the service worker — keeps working with no network at all.
+  On phones: push the stick past the rim to sprint, pinch to zoom the
+  camcorder (the AF hunts when you let go), and enable **GYRO LOOK** on the
+  title screen to aim by physically moving the phone.
 
 ## Controls
 

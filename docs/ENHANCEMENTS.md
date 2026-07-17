@@ -89,6 +89,15 @@ Aimed at the *Backrooms: Escape Together* bar, within a phone's budget.
   controls clear the notch/home indicator; haptic hooks on damage, hunts,
   pickups and death (`navigator.vibrate` today — a no-op on iOS Safari, live
   once wrapped natively).
+- **Installable + fully offline (PWA).** `manifest.webmanifest` + generated
+  icon set (rendered from `scratch` at 1024→152 px: the grinning stickman in
+  a doorway) + `sw.js` cache-first service worker that precaches the game,
+  the vendored three.js and all four stickman models — verified to cold-boot
+  with the network cut. Add to Home Screen = fullscreen landscape app.
+- **Camcorder pinch-zoom** (1–2.4×) with a W▮▮▯▯T rocker readout, autofocus
+  hunt on release, zoom-scaled hand shake and finer look sensitivity while
+  zoomed; **push-the-stick-past-the-rim to sprint** with hysteresis so the
+  RUN button is optional.
 
 ## 1. VHS shader — rebuilt around the real analog signal path
 

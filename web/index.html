@@ -4,6 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>THE BACKROOMS // FOUND FOOTAGE</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Backrooms">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="apple-touch-icon" sizes="167x167" href="icons/icon-167.png">
+<link rel="apple-touch-icon" sizes="152x152" href="icons/icon-152.png">
 <style>
   :root{--osd:#f2f0e4;--rec:#ff2222;--nv:#7dffa0}
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -109,6 +118,7 @@
 <div class="osd" id="osdTime">SEP 23 1996<br>02:47:13 AM</div>
 <div class="osd" id="osdMode">SP&nbsp;0:00:00 · L0<br>TAPES&nbsp;0/6</div>
 <div class="osd" id="osdNV">NIGHTSHOT ◉</div>
+<div class="osd" id="osdZoom" style="top:8.5%;right:4%;text-align:right;display:none">W&#8195;&#9646;&#9646;&#9646;&#9647;&#9647;&#8195;T</div>
 <div class="osd" id="osdAF">AF</div>
 <div class="osd" id="osdExit">EXIT ▸ --M</div>
 <div class="osd" id="osdThreat"><span id="threatDot"></span><span id="threatTxt">DORMANT</span></div>
@@ -1511,7 +1521,8 @@ const DIFFS={
 };
 let diff=DIFFS.standard;
 const keys={};
-const touch={mx:0,mz:0,run:false,active:('ontouchstart' in window)&&navigator.maxTouchPoints>0};
+const touch={mx:0,mz:0,run:false,runAuto:false,active:('ontouchstart' in window)&&navigator.maxTouchPoints>0};
+let camZoom=1,camZoomT=1;   /* camcorder pinch zoom (1..2.4) */
 const player={
   pos:new THREE.Vector3(0,EYE,0),
   yaw:-Math.PI/2,pitch:0,vx:0,vz:0,
@@ -1702,7 +1713,7 @@ function updatePlayer(dt){
   mx+=touch.mx;mz+=touch.mz;
   const il=Math.hypot(mx,mz);if(il>1){mx/=il;mz/=il;}
   player.strafe=mx;
-  const wantRun=(keys['ShiftLeft']||keys['ShiftRight']||touch.run);
+  const wantRun=(keys['ShiftLeft']||keys['ShiftRight']||touch.run||touch.runAuto);
   const sprint=wantRun&&player.stamina>4&&il>0.1;
   let speed=sprint?5.4:3.1;
   const inWaterP=(LV.theme==='pool'&&groundY<0.25);
@@ -1808,8 +1819,9 @@ function applyCamera(t,dt){
   const brP=Math.sin(t*1.1+0.6)*0.004*idle;
   /* nerve tremor: unsteady hands once sanity dips low */
   const nerve=live*Math.pow(Math.max(0,35-player.sanity)/35,1.5)*0.013;
-  const hy=Math.sin(t*0.9)*0.012+Math.sin(t*2.3+1.7)*0.007+Math.sin(t*5.1)*0.003+Math.sin(t*7.3)*nerve;
-  const hp=Math.sin(t*1.1+4.0)*0.010+Math.sin(t*2.9)*0.006+Math.sin(t*6.3)*0.0025+Math.sin(t*8.1)*nerve*0.7;
+  const zshk=0.65+0.35*camZoom;   /* zoomed-in camcorders shake more */
+  const hy=(Math.sin(t*0.9)*0.012+Math.sin(t*2.3+1.7)*0.007+Math.sin(t*5.1)*0.003+Math.sin(t*7.3)*nerve)*zshk;
+  const hp=(Math.sin(t*1.1+4.0)*0.010+Math.sin(t*2.9)*0.006+Math.sin(t*6.3)*0.0025+Math.sin(t*8.1)*nerve*0.7)*zshk;
   const hr=Math.sin(t*0.7+2.0)*0.009+Math.sin(t*3.7)*0.004;
   const shx=(Math.random()-0.5)*shakeAmp;
   const shy=(Math.random()-0.5)*shakeAmp;
@@ -2900,25 +2912,49 @@ function setupTouch(){
       let dx=(tch.clientX-sx)/rad,dy=(tch.clientY-sy)/rad;
       const l=Math.hypot(dx,dy);if(l>1){dx/=l;dy/=l;}
       touch.mx=dx;touch.mz=dy;
+      /* push past the rim to sprint (hysteresis so it doesn't chatter) */
+      if(l>=0.96)touch.runAuto=true;else if(l<0.86)touch.runAuto=false;
       knob.style.transform='translate('+(dx*rad*0.5)+'px,'+(dy*rad*0.5)+'px)';
     }
     e.preventDefault();
   },{passive:false});
-  const endS=e=>{for(const tch of e.changedTouches)if(tch.identifier===sid){sid=null;touch.mx=0;touch.mz=0;knob.style.transform='';}};
+  const endS=e=>{for(const tch of e.changedTouches)if(tch.identifier===sid){sid=null;touch.mx=0;touch.mz=0;touch.runAuto=false;knob.style.transform='';}};
   stick.addEventListener('touchend',endS);stick.addEventListener('touchcancel',endS);
   const look=document.getElementById('lookZone');
-  let lid=null,lx=0,ly=0;
-  look.addEventListener('touchstart',e=>{const tch=e.changedTouches[0];lid=tch.identifier;lx=tch.clientX;ly=tch.clientY;},{passive:true});
+  let lid=null,lx=0,ly=0,pinch=null;
+  look.addEventListener('touchstart',e=>{
+    if(e.touches.length>=2){        /* two fingers = camcorder zoom */
+      const a=e.touches[0],b=e.touches[1];
+      pinch={d0:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)||1,z0:camZoomT};
+      lid=null;
+      return;
+    }
+    const tch=e.changedTouches[0];lid=tch.identifier;lx=tch.clientX;ly=tch.clientY;
+  },{passive:true});
   look.addEventListener('touchmove',e=>{
+    if(pinch&&e.touches.length>=2){
+      const a=e.touches[0],b=e.touches[1];
+      const d=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)||1;
+      camZoomT=Math.max(1,Math.min(2.4,pinch.z0*d/pinch.d0));
+      e.preventDefault();
+      return;
+    }
     for(const tch of e.changedTouches){
       if(tch.identifier!==lid)continue;
-      player.yaw-=(tch.clientX-lx)*0.0045;
-      player.pitch=Math.max(-1.45,Math.min(1.45,player.pitch-(tch.clientY-ly)*0.0045));
+      const sens=0.0045/camZoom;    /* zoomed in = finer look control */
+      player.yaw-=(tch.clientX-lx)*sens;
+      player.pitch=Math.max(-1.45,Math.min(1.45,player.pitch-(tch.clientY-ly)*sens));
       lx=tch.clientX;ly=tch.clientY;
     }
     e.preventDefault();
   },{passive:false});
-  const endL=e=>{for(const tch of e.changedTouches)if(tch.identifier===lid)lid=null;};
+  const endL=e=>{
+    if(pinch&&e.touches.length<2){  /* pinch released -> the AF hunts */
+      pinch=null;
+      if(elAF){elAF.style.opacity=1;clickSnd();glitchSpike(0.12);setTimeout(()=>{elAF.style.opacity=0;},450);}
+    }
+    for(const tch of e.changedTouches)if(tch.identifier===lid)lid=null;
+  };
   look.addEventListener('touchend',endL);look.addEventListener('touchcancel',endL);
   const btn=(id,down,up)=>{
     const b=document.getElementById(id);
@@ -3708,6 +3744,16 @@ function hudTick(dt){
   const carrying=state==='play'&&player.hasWater;
   elItem.style.display=carrying&&!touch.active?'block':'none';
   if(elHeal)elHeal.style.display=carrying&&touch.active?'block':'none';
+  /* camcorder zoom rocker readout (W ▮▮▯▯ T) */
+  const ez=document.getElementById('osdZoom');
+  if(ez){
+    if(camZoom>1.02&&inGame){
+      const n=Math.round((camZoom-1)/1.4*5);
+      let bar='';for(let i=0;i<5;i++)bar+=(i<n)?'▮':'▯';
+      ez.textContent='W '+bar+' T';
+      ez.style.display='block';
+    }else ez.style.display='none';
+  }
   /* threat ticker: countdown to next spawn, contact, or active hunt */
   if(state==='play'&&entity){
     elThreat.style.display='flex';
@@ -3750,6 +3796,10 @@ function init(){
   if(touch.active)setupTouch();
   bindUI();
   window.addEventListener('resize',onResize);
+  /* installable + offline (http(s) only — file:// runs without it) */
+  if('serviceWorker' in navigator&&location.protocol.indexOf('http')===0){
+    try{navigator.serviceWorker.register('sw.js');}catch(_){}
+  }
   requestAnimationFrame(loop);
 }
 let lastT=performance.now();
@@ -3815,7 +3865,8 @@ function loop(now){
   const lampFlick=(player.battery<12&&player.battery>0)?(Math.random()<0.09?0.35:1):1;
   flashlight.intensity+=(((lightWanted?2.6:0)*lampFlick)-flashlight.intensity)*Math.min(1,dt*14);
   if(flashSpill)flashSpill.intensity=flashlight.intensity*0.42;
-  const fovT=(state==='play'&&(keys['ShiftLeft']||keys['ShiftRight']||touch.run)&&player.moveAmt>3.6)?77.5:72;
+  camZoom+=(camZoomT-camZoom)*Math.min(1,dt*8);
+  const fovT=((state==='play'&&(keys['ShiftLeft']||keys['ShiftRight']||touch.run||touch.runAuto)&&player.moveAmt>3.6)?77.5:72)/camZoom;
   if(Math.abs(camera.fov-fovT)>0.05){
     camera.fov+=(fovT-camera.fov)*Math.min(1,dt*5);
     camera.updateProjectionMatrix();
