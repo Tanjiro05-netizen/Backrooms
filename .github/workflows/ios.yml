@@ -1,0 +1,37 @@
+name: iOS
+
+on:
+  push:
+    paths:
+      - 'ios/**'
+      - 'web/**'
+      - 'assets/**'
+      - 'swift/**'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-shell:
+    name: Build WKWebView shell (iOS Simulator)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: xcodebuild
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project ios/BackroomsIOS/BackroomsIOS.xcodeproj \
+            -scheme BackroomsIOS \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=NO | tail -80
+
+  core-tests:
+    name: BackroomsCore swift test
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: swift test
+        run: swift test --package-path swift/BackroomsCore
