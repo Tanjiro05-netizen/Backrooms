@@ -27,7 +27,10 @@ is built alongside it; both live in the same repo and share fixtures.
 | Map generator | ✅ BackroomsCore | ✅ all 4 floors exact | walls/zones/pillars/doors/fixtures + connectivity carving |
 | BFS distance field | ✅ BackroomsCore | ✅ (drives generator) | entity pathfinding |
 | Grid-DDA line of sight | ✅ BackroomsCore | smoke tests | used by AI + audio occlusion later |
-| Colliders + player movement | ⬜ next | — | port `collide()` + friction model, fixture: recorded input → position trace |
+| Wall/pillar geometry emitters | ✅ BackroomsCore | ✅ all 4 floors byte-exact | per-chunk Float32 buffers FNV-hashed vs the JS builders |
+| Collider buckets | ✅ BackroomsCore | ✅ all 4 floors exact | wall+pillar rects; theme-prop colliders come with props |
+| Theme props (crates/pipes/pool platforms, fixture geo) | ⬜ | — | needs cylinder/sphere/torus emitters (`appendGeom` equivalents) |
+| Player movement + `collide()` | ⬜ next | — | friction model against collider buckets; fixture: recorded input → position trace |
 | Entity AI (idle/seen/hunt, telegraph, stalker reposition) | ⬜ | — | port state machine; fixture: scripted scenario traces |
 | Tapes / items / exits / level flow | ⬜ | — | pure logic, easy fixtures |
 | Nerve/sanity + horror director | ⬜ | — | port schedules; keep event weights |
