@@ -26,6 +26,19 @@ public struct GameMap: Sendable {
     public func vWall(_ x: Int, _ z: Int) -> UInt8 { vWalls[x + z * (grid + 1)] }
     public func hWall(_ x: Int, _ z: Int) -> UInt8 { hWalls[x + z * grid] }
 
+    /// Poolrooms platform height (`PLAT`) — floor sits at 0 inside water zones,
+    /// raised to this outside them. Other themes are flat at 0.
+    public static let platformHeight = 0.55
+
+    /// Ground height under a world point. Port of `groundAt`; only the pool
+    /// theme has raised platforms, every other floor is flat.
+    public func groundHeight(atX wx: Double, z wz: Double) -> Double {
+        guard spec.theme == .pool else { return 0 }
+        let cx = worldToCellX(wx), cz = worldToCellZ(wz)
+        if cx < 0 || cz < 0 || cx >= grid || cz >= grid { return GameMap.platformHeight }
+        return zoneMask[cx + cz * grid] != 0 ? 0 : GameMap.platformHeight
+    }
+
     /// World-space centre of a cell (matches `cellWX/cellWZ`).
     public func cellWorldX(_ cx: Int) -> Double { (Double(cx) - Double(grid) / 2 + 0.5) * spec.cellSize }
     public func cellWorldZ(_ cz: Int) -> Double { (Double(cz) - Double(grid) / 2 + 0.5) * spec.cellSize }
