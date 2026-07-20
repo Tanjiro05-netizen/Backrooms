@@ -1,5 +1,21 @@
 # Enhancements & Research Notes
 
+## Beta: save/progress + quit-to-title
+
+The shell crosses from alpha into beta with persistence and a real
+menu loop:
+
+- **Floor-checkpoint save** (`br_progress` in localStorage, mirrored to
+  native `UserDefaults` via the `progress` bridge message): the deepest
+  floor reached is remembered, so the title offers **CONTINUE — LEVEL n**.
+  Descending checkpoints the new floor; winning clears the checkpoint and
+  records **best escape time / best tapes / wins / runs / signal losses**.
+- **Quit to title** from the pause menu returns cleanly to the title screen
+  (no reload) with progress intact, and a **touch pause button** gives
+  mobile players a way to pause, resume, and quit.
+- The title shows a best-run readout; a fresh install shows neither Continue
+  nor stats until a run exists.
+
 ## 0. Eerie stickman entities — generated, rigged, animated
 
 All four floors are now haunted by **eerie stickmen**: matte-black, wrongly

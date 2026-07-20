@@ -51,6 +51,8 @@ locally and forwards gameplay haptic intents to iOS. Open
 - **On iPhone/iPad:** open the served URL in Safari → Share → **Add to Home
   Screen**. The game installs as a fullscreen landscape app with its own icon
   and — thanks to the service worker — keeps working with no network at all.
+  Progress is saved per floor: the title offers **CONTINUE** at the deepest
+  level reached, and the pause menu (❚❚ button on touch) can quit to title.
   On phones: push the stick past the rim to sprint, pinch to zoom the
   camcorder (the AF hunts when you let go), and enable **GYRO LOOK** on the
   title screen to aim by physically moving the phone.

@@ -66,9 +66,21 @@ struct BackroomsWebView: UIViewRepresentable {
                 playHaptic(pattern: payload["pattern"])
             case "gyro":
                 setGyroEnabled(payload["enabled"] as? Bool ?? false)
+            case "progress":
+                saveProgress(payload["data"])
             default:
                 break
             }
+        }
+
+        /// Durable native backup of the web game's save. The WKWebView's own
+        /// localStorage already persists across launches; this mirrors it into
+        /// UserDefaults (survives WebKit data resets) and is the hook where an
+        /// iCloud key-value store would go once that capability is configured.
+        private func saveProgress(_ data: Any?) {
+            guard let dict = data as? [String: Any],
+                  let json = try? JSONSerialization.data(withJSONObject: dict) else { return }
+            UserDefaults.standard.set(json, forKey: "br_progress")
         }
 
         func observeApplicationLifecycle() {

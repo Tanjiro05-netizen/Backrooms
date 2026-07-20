@@ -108,6 +108,12 @@
   .seg button:hover{background:rgba(242,240,228,.08)}
   .seg button.on{background:rgba(242,240,228,.85);color:#0a0a08;text-shadow:none}
   .setHint{font-size:clamp(9px,1vw,12px);letter-spacing:.16em;opacity:.4;margin-top:.3em}
+  .saveLine{margin-top:1.4em;font-size:clamp(10px,1.2vw,14px);letter-spacing:.2em;color:#9dffb5;opacity:.8;
+    text-shadow:0 0 8px rgba(157,255,181,.4),0 0 2px #000}
+  #btnPause{position:absolute;pointer-events:auto;top:calc(3.2% + env(safe-area-inset-top,0px));
+    left:50%;transform:translateX(-50%);width:11vmin;height:11vmin;max-width:56px;max-height:56px;
+    border-radius:50%;border:2px solid rgba(255,255,255,.22);background:rgba(0,0,0,.28);
+    color:var(--osd);font-family:inherit;font-weight:700;font-size:3.4vmin;letter-spacing:-.05em}
 </style>
 </head>
 <body>
@@ -140,6 +146,7 @@
   <button class="tbtn" id="btnNV">NV</button>
   <button class="tbtn" id="btnUse" style="display:none;right:42%;bottom:10%">USE</button>
   <button class="tbtn" id="btnHeal">DRINK</button>
+  <button id="btnPause" aria-label="Pause">❚❚</button>
 </div>
 
 <div class="ovl" id="ovlStart">
@@ -155,9 +162,11 @@
     [E] INTERACT&nbsp;&nbsp;[F] CAMERA LIGHT&nbsp;&nbsp;[N] NIGHTSHOT IR&nbsp;&nbsp;[Q] DRINK</span>
   </div>
   <div class="btnrow">
+    <button class="btn" id="btnContinue" style="display:none">▶▶ CONTINUE</button>
     <button class="btn" id="btnPlay">► PLAY</button>
     <button class="btn sm" id="btnPlaySimple">○ SIMPLE MODE</button>
   </div>
+  <div class="saveLine" id="saveLine" style="display:none"></div>
   <div class="settings" id="settingsPanel">
     <div class="setRow">
       <span class="setLabel">TAPE FILTER</span>
@@ -192,7 +201,11 @@
   <div class="scan"></div>
   <h1>⏸ PAUSE</h1>
   <div class="sub">PLAYBACK INTERRUPTED</div>
-  <button class="btn" id="btnResume">► RESUME</button>
+  <div class="btnrow">
+    <button class="btn" id="btnResume">► RESUME</button>
+    <button class="btn sm" id="btnQuit">◄ QUIT TO TITLE</button>
+  </div>
+  <div class="setHint" style="margin-top:1.6em">PROGRESS TO THIS FLOOR IS SAVED</div>
 </div>
 
 <div class="ovl" id="ovlLevel">
@@ -282,6 +295,21 @@ const SETTINGS=(function(){
   return d;
 })();
 function saveSettings(){try{localStorage.setItem('br_settings',JSON.stringify(SETTINGS));}catch(e){}}
+/* =========================================================
+   PROGRESS / SAVE  (persisted; mirrored to iCloud on native)
+   Floor-granularity checkpoint: quitting or dying keeps the
+   deepest floor reached so the title can offer CONTINUE.
+   ========================================================= */
+const PROGRESS=(function(){
+  const d={maxLevel:0,runLevel:null,mode:'standard',bestTime:null,bestTapes:0,runs:0,wins:0,deaths:0};
+  try{const s=JSON.parse(localStorage.getItem('br_progress')||'{}');Object.assign(d,s);}catch(e){}
+  return d;
+})();
+function saveProgress(){
+  try{localStorage.setItem('br_progress',JSON.stringify(PROGRESS));}catch(e){}
+  /* the native shell persists this to iCloud key-value when present */
+  try{nativePost('progress',{data:PROGRESS});}catch(e){}
+}
 
 /* ---------- PRNG / noise ---------- */
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
@@ -2536,6 +2564,7 @@ let dying=null;
 function die(){
   if(state!=='play')return;
   deaths++;
+  PROGRESS.deaths=(PROGRESS.deaths|0)+1;saveProgress();
   haptic([120,60,200]);
   state='dying';
   const f=getCamForward();
@@ -3405,6 +3434,8 @@ function descend(){
   document.getElementById('lvlName').textContent=nxt.name;
   document.getElementById('lvlSub').textContent=nxt.sub;
   document.getElementById('ovlLevel').style.display='flex';
+  /* checkpoint: the deeper floor is now reached and unlocked for CONTINUE */
+  PROGRESS.runLevel=levelIdx+1;PROGRESS.maxLevel=Math.max(PROGRESS.maxLevel|0,levelIdx+1);saveProgress();
   setTimeout(()=>{buildLevel(levelIdx+1);},650);
   setTimeout(()=>{
     document.getElementById('ovlLevel').style.display='none';
@@ -3422,8 +3453,17 @@ function win(){
   if(state!=='play')return;
   state='win';
   try{document.exitPointerLock();}catch(e){}
+  /* record the completed run; a finished run clears the resume checkpoint */
+  PROGRESS.wins=(PROGRESS.wins|0)+1;
+  PROGRESS.runLevel=null;PROGRESS.maxLevel=3;
+  const newBest=(PROGRESS.bestTime==null||gameTime<PROGRESS.bestTime);
+  if(newBest)PROGRESS.bestTime=gameTime;
+  if(tapesFound>(PROGRESS.bestTapes|0))PROGRESS.bestTapes=tapesFound;
+  saveProgress();
   document.getElementById('winStats').innerHTML=
-    'RUNTIME&nbsp; '+fmtTime(gameTime)+'<br>TAPES&nbsp; '+tapesFound+'/8<br>LEVELS CLEARED&nbsp; 4/4<br>SIGNAL LOSSES&nbsp; '+deaths;
+    'RUNTIME&nbsp; '+fmtTime(gameTime)+(newBest?'&nbsp; ◂ NEW BEST':'')+
+    '<br>TAPES&nbsp; '+tapesFound+'/8<br>LEVELS CLEARED&nbsp; 4/4<br>SIGNAL LOSSES&nbsp; '+deaths+
+    '<br>BEST ESCAPE&nbsp; '+fmtTime(PROGRESS.bestTime);
   document.getElementById('ovlWin').style.display='flex';
 }
 
@@ -3665,8 +3705,13 @@ function bindUI(){
   document.getElementById('gyroRow').style.display=touch.active?'flex':'none';
   document.getElementById('btnPlay').addEventListener('click',()=>startGame('standard'));
   document.getElementById('btnPlaySimple').addEventListener('click',()=>startGame('simple'));
+  document.getElementById('btnContinue').addEventListener('click',()=>startGame(PROGRESS.mode||'standard',true));
   document.getElementById('btnResume').addEventListener('click',resumeGame);
+  document.getElementById('btnQuit').addEventListener('click',quitToTitle);
   document.getElementById('btnRetry').addEventListener('click',retryLevel);
+  const bp=document.getElementById('btnPause');
+  if(bp)bp.addEventListener('click',()=>{if(state==='play')showPause(true);else if(state==='pause')resumeGame();});
+  refreshTitleSave();
   initSettingsUI();
   /* Losing pointer-lock (Esc) pauses ONLY if the player was in locked FPS mode.
      Drag-to-look never locks, so trackpad users are never force-paused. */
@@ -3677,8 +3722,14 @@ function bindUI(){
   });
   document.addEventListener('contextmenu',e=>e.preventDefault());
 }
-function startGame(mode){
+function startGame(mode,resume){
   diff=DIFFS[mode]||DIFFS.standard;
+  /* fresh run starts at floor 0; CONTINUE resumes the deepest floor reached */
+  const startLevel=resume?Math.max(0,Math.min(3,PROGRESS.maxLevel|0)):0;
+  gameTime=0;deaths=0;tapesFound=0;
+  PROGRESS.mode=mode;PROGRESS.runLevel=startLevel;PROGRESS.maxLevel=Math.max(PROGRESS.maxLevel|0,startLevel);
+  PROGRESS.runs=(PROGRESS.runs|0)+1;saveProgress();
+  if(startLevel!==levelIdx)buildLevel(startLevel);
   if(diff.beaconAlways&&exitObj)document.getElementById('osdExit').style.display='block';
   initAudio();
   if(AC&&AC.resume)AC.resume();
@@ -3696,13 +3747,50 @@ function startGame(mode){
 }
 function showPause(on){
   document.getElementById('ovlPause').style.display=on?'flex':'none';
-  if(on)state='pause';
+  if(on){state='pause';if(AC&&AC.suspend)AC.suspend();}
 }
 function resumeGame(){
   showPause(false);
   state='play';
   if(AC&&AC.resume)AC.resume();
   syncNativeGyro();
+}
+/* leave the current run and return to the title. The deepest floor reached
+   stays saved, so CONTINUE picks the descent back up. */
+function quitToTitle(){
+  document.getElementById('ovlPause').style.display='none';
+  document.getElementById('ovlRetry').style.display='none';
+  try{document.exitPointerLock();}catch(e){}
+  if(AC&&AC.suspend)AC.suspend();
+  if(entity){entity.state='idle';entity.mesh.visible=false;}
+  droneTarget=0;blackoutT=0;glimpseT=0;humCutT=0;
+  state='menu';
+  refreshTitleSave();
+  document.getElementById('ovlStart').style.display='flex';
+}
+/* title screen CONTINUE button + best-run readout */
+function refreshTitleSave(){
+  const btn=document.getElementById('btnContinue');
+  const line=document.getElementById('saveLine');
+  const canResume=(PROGRESS.maxLevel|0)>0;
+  if(btn){
+    if(canResume){
+      const lv=Math.max(0,Math.min(3,PROGRESS.maxLevel|0));
+      btn.textContent='▶▶ CONTINUE — '+(lv===3?'LEVEL 37':'LEVEL '+lv);
+      btn.style.display='';
+    }else btn.style.display='none';
+  }
+  if(line){
+    if((PROGRESS.wins|0)>0&&PROGRESS.bestTime!=null){
+      line.innerHTML='BEST ESCAPE&nbsp; '+fmtTime(PROGRESS.bestTime)+'&nbsp;&nbsp;·&nbsp;&nbsp;TAPES&nbsp; '
+        +(PROGRESS.bestTapes|0)+'/8&nbsp;&nbsp;·&nbsp;&nbsp;RUNS&nbsp; '+(PROGRESS.runs|0);
+      line.style.display='';
+    }else if((PROGRESS.runs|0)>0){
+      line.innerHTML='DEEPEST&nbsp; '+((PROGRESS.maxLevel|0)===3?'LEVEL 37':'LEVEL '+(PROGRESS.maxLevel|0))
+        +'&nbsp;&nbsp;·&nbsp;&nbsp;RUNS&nbsp; '+(PROGRESS.runs|0)+'&nbsp;&nbsp;·&nbsp;&nbsp;SIGNAL LOSSES&nbsp; '+(PROGRESS.deaths|0);
+      line.style.display='';
+    }else line.style.display='none';
+  }
 }
 function showMsg(txt,ms){
   elMsg.textContent='▮ '+txt+' ▮';
@@ -3747,6 +3835,8 @@ function hudTick(dt){
   const carrying=state==='play'&&player.hasWater;
   elItem.style.display=carrying&&!touch.active?'block':'none';
   if(elHeal)elHeal.style.display=carrying&&touch.active?'block':'none';
+  const bpause=document.getElementById('btnPause');
+  if(bpause)bpause.style.display=(touch.active&&(state==='play'||state==='pause'))?'block':'none';
   /* camcorder zoom rocker readout (W ▮▮▯▯ T) */
   const ez=document.getElementById('osdZoom');
   if(ez){
