@@ -30,8 +30,10 @@ is built alongside it; both live in the same repo and share fixtures.
 | Wall/pillar geometry emitters | ✅ BackroomsCore | ✅ all 4 floors byte-exact | per-chunk Float32 buffers FNV-hashed vs the JS builders |
 | Collider buckets | ✅ BackroomsCore | ✅ all 4 floors exact | wall+pillar rects; theme-prop colliders come with props |
 | Player movement + `collide()` + stamina | ✅ BackroomsCore | ✅ 480-frame traces, <1e-6 drift | driven by the real `updatePlayer`; tolerance not hash (transcendentals) |
+| Entity hunt navigation (`EntityHunt`) | ✅ BackroomsCore | ✅ 300-frame chase traces, exact | BFS repath + greedy descent + speed model + burst + attack; seeded crawler burst |
+| Entity defs (4 creatures) | ✅ BackroomsCore | ✅ | speed/catchR/huntTime/burst/waterSpeed |
 | Theme props (crates/pipes/pool platforms, fixture geo) | ⬜ | — | needs cylinder/sphere/torus emitters (`appendGeom` equivalents) |
-| Entity AI (idle/seen/hunt, telegraph, stalker reposition) | ⬜ next | — | port state machine; fixture: scripted scenario traces |
+| Entity idle/seen phases (sighting, flee, gaze-vanish, stalker reposition) | ⬜ next | — | mixes seeded + Math.random; scenario fixtures with seeded random |
 | Tapes / items / exits / level flow | ⬜ | — | pure logic, easy fixtures |
 | Nerve/sanity + horror director | ⬜ | — | port schedules; keep event weights |
 | **Renderer (Metal)** | ⬜ | — | see below |
