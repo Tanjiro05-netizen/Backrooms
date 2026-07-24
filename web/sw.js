@@ -2,7 +2,7 @@
    Cache-first with background refresh: the game is fully playable with no
    network (procedural world + local three.js + stickman models), which is
    also what a wrapped iOS build expects. Bump VERSION on every release. */
-const VERSION = 'backrooms-v3';
+const VERSION = 'backrooms-v4';
 const CORE = [
   './',
   'index.html',
@@ -14,7 +14,8 @@ const CORE = [
   '../assets/models/entities/stickman_tall.glb',
   '../assets/models/entities/stickman_hound.glb',
   '../assets/models/entities/stickman_crawler.glb',
-  '../assets/models/entities/stickman_drowned.glb'
+  '../assets/models/entities/stickman_drowned.glb',
+  '../assets/models/props/monument.glb'
 ];
 self.addEventListener('install', e => {
   e.waitUntil(

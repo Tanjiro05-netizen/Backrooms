@@ -1,2 +1,5 @@
 .DS_Store
 .claude/settings.local.json
+
+# Raw, unoptimized source models — run tools/optimize_glb.js and commit the result
+assets/models/**/*_raw.glb

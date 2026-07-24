@@ -2259,6 +2259,88 @@ function animModel(E,dt,t,mv,att){
     E.headNode.rotation.z+=E.twRZ*0.45;
   }
 }
+/* =========================================================
+   LIMINAL MONUMENT — a landmark that should not be here.
+   One per qualifying floor, placed far from spawn in an open
+   zone. It never moves and never chases; it simply exists,
+   lit wrong, humming, and standing where a warehouse should
+   have nothing. Getting close erodes nerve.
+   ========================================================= */
+const MONUMENTS={
+  warehouse:{url:'../assets/models/props/monument.glb',scale:2.6,yOffset:0,
+    light:0xffe0a0,lightI:1.5,lightD:11,hum:52}
+};
+let monument=null;
+function clearMonument(){
+  if(!monument)return;
+  monument.g.traverse(o=>{if(o.geometry)o.geometry.dispose();});
+  scene.remove(monument.g);
+  if(monument.hum){try{monument.hum.stop();}catch(e){}monument.hum=null;}
+  monument=null;
+}
+function buildMonument(){
+  clearMonument();
+  const spec=MONUMENTS[LV.theme];
+  if(!spec||typeof THREE.GLTFLoader!=='function')return;
+  /* place it far from spawn, in an open zone cell, away from the exit */
+  const df=bfsFrom(SPAWN_CX,SPAWN_CZ);
+  const cands=[];
+  for(let z=2;z<GH-2;z++)for(let x=2;x<GW-2;x++){
+    const d=df[x+z*GW];
+    if(d<10||pillarMask[x+z*GW]||!zoneMask[x+z*GW])continue;
+    if(exitObj&&Math.hypot(cellWX(x)-exitObj.wx,cellWZ(z)-exitObj.wz)<CS*3)continue;
+    cands.push([x,z,d]);
+  }
+  if(!cands.length)return;
+  cands.sort((a,b)=>b[2]-a[2]);                       /* prefer the deepest reachable */
+  const pick=cands[Math.floor(lrng()*Math.min(cands.length,12))];
+  const wx=cellWX(pick[0]),wz=cellWZ(pick[1]);
+  const g=new THREE.Group();
+  g.position.set(wx,groundAt(wx,wz)+(spec.yOffset||0),wz);
+  g.rotation.y=lrng()*6.283;
+  scene.add(g);
+  const gl=new THREE.PointLight(spec.light,spec.lightI,spec.lightD,2);
+  gl.position.set(0,1.4,0);g.add(gl);
+  monument={g,wx,wz,light:gl,loaded:false,hum:null,t:0};
+  new THREE.GLTFLoader().load(spec.url,res=>{
+    if(!monument||monument.g!==g)return;                /* level changed mid-load */
+    const root=res.scene;
+    root.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;o.frustumCulled=true;}});
+    root.scale.setScalar(spec.scale||1);
+    g.add(root);
+    monument.loaded=true;
+    startMonumentHum(spec.hum);
+  },undefined,()=>{ /* missing model: keep the light as a lonely glow */ });
+}
+/* a low tone that only exists near the monument */
+function startMonumentHum(freq){
+  if(!AC||!monument)return;
+  try{
+    const o=AC.createOscillator();o.type='sine';o.frequency.value=freq||52;
+    const g2=AC.createGain();g2.gain.value=0;
+    o.connect(g2);g2.connect(masterGain);o.start();
+    monument.hum=o;monument.humGain=g2;
+  }catch(e){}
+}
+function updateMonument(dt,t){
+  if(!monument)return;
+  const d=Math.hypot(player.pos.x-monument.wx,player.pos.z-monument.wz);
+  monument.t+=dt;
+  /* the light breathes; the whole thing turns imperceptibly */
+  if(monument.light)monument.light.intensity=1.5*(0.82+0.18*Math.sin(monument.t*0.7));
+  monument.g.rotation.y+=dt*0.012;
+  if(monument.humGain){
+    const want=Math.max(0,1-d/16)*0.05;
+    monument.humGain.gain.value+=(want-monument.humGain.gain.value)*Math.min(1,dt*2);
+  }
+  /* standing in its presence is not good for you */
+  if(state==='play'&&d<7)player.sanity=Math.max(0,player.sanity-dt*1.4);
+  if(state==='play'&&d<11&&!monument.seen){
+    monument.seen=true;
+    showMsg('THIS WAS NOT IN THE FLOOR PLAN.',4200);
+    glitchSpike(0.5);
+  }
+}
 function buildEntity(kind){
   if(entity){
     entity.mesh.traverse(o=>{if(o.geometry)o.geometry.dispose();});
@@ -3400,7 +3482,7 @@ function buildLevel(i){
   GW=LV.grid;GH=LV.grid;CS=LV.cs;WH=LV.wh;UVS=LV.uvs;
   VVS=(LV.theme==='pool')?1.5:WH;
   SPAWN_CX=Math.max(3,Math.round(GW*0.16));SPAWN_CZ=GH>>1;
-  clearTapes();clearItems();clearExit();
+  clearTapes();clearItems();clearExit();clearMonument();
   teardownWorld();
   WALL_AO_U.value=WH;
   allocMap();
@@ -3414,6 +3496,7 @@ function buildLevel(i){
   buildTapes(LV.tapes);
   buildItems();
   placeExitFar();
+  buildMonument();          /* after the exit, so it can avoid it */
   buildWallArrows();
   player.pos.set(cellWX(SPAWN_CX),EYE,cellWZ(SPAWN_CZ));
   player.vx=0;player.vz=0;player.yaw=-Math.PI/2;player.pitch=0;
@@ -3908,6 +3991,7 @@ function loop(now){
     updateTapes(dt,t);
     updateItems(dt,t);
     updateExit(dt);
+    updateMonument(dt,t);
     updateDirector(dt,t);
   }
   if(state==='menu')player.yaw+=dt*0.05;
