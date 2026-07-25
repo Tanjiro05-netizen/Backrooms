@@ -53,18 +53,25 @@ public struct InterleavedMesh {
         let half = Float(Double(map.grid) * map.spec.cellSize / 2)
         let ny: Float = flipNormal ? -1 : 1
         let r = uvRepeat
-        // Two triangles, wound so the visible face points at the player.
-        let corners: [(Float, Float, Float, Float)] = flipNormal
-            ? [(-half, -half, 0, 0), (-half, half, 0, r), (half, half, r, r),
-               (-half, -half, 0, 0), (half, half, r, r), (half, -half, r, 0)]
-            : [(-half, -half, 0, 0), (half, half, r, r), (-half, half, 0, r),
-               (-half, -half, 0, 0), (half, -half, r, 0), (half, half, r, r)]
-        var v = [Float]()
-        v.reserveCapacity(corners.count * floatsPerVertex)
-        for (x, z, u, w) in corners {
-            v.append(contentsOf: [x, y, z, 0, ny, 0, u, w])
+        let zero: Float = 0
+
+        // The four corners, each carrying its uv.
+        let bl = (x: -half, z: -half, u: zero, v: zero)   // back-left
+        let br = (x:  half, z: -half, u: r,    v: zero)
+        let fl = (x: -half, z:  half, u: zero, v: r)
+        let fr = (x:  half, z:  half, u: r,    v: r)
+
+        // Two triangles, wound so the visible face points at the player: the
+        // ceiling faces down, the floor faces up, so their winding is opposite.
+        let corners = flipNormal ? [bl, fl, fr, bl, fr, br]
+                                 : [bl, fr, fl, bl, br, fr]
+
+        var verts = [Float]()
+        verts.reserveCapacity(corners.count * floatsPerVertex)
+        for c in corners {
+            verts.append(contentsOf: [c.x, y, c.z, zero, ny, zero, c.u, c.v])
         }
-        return InterleavedMesh(rawVertices: v)
+        return InterleavedMesh(rawVertices: verts)
     }
 
     init(rawVertices: [Float]) { self.vertices = rawVertices }
