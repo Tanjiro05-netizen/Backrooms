@@ -1,5 +1,42 @@
 # Enhancements & Research Notes
 
+## Balance: the exit was a death trap
+
+Reaching the first exit reliably killed the player, and the cause was
+arithmetic rather than bad luck:
+
+- **You could not outrun anything.** With 16/s sprint drain against 11/s
+  regen, sustainable pace was 4.04 m/s while the smiler hunts at 4.65 and
+  the hound at 5.15. The first sprint bought six seconds; after that being
+  caught was only a matter of time.
+- **The hunt was guaranteed 2–5s after the final tape.** `scheduleHunt`
+  takes the *minimum*, so the tape's 2–5s timer overrode the exit
+  relocation's 5s — a hunt began while the player was still reading
+  "a door tore itself through a wall nearby" and had no idea where it went.
+- **Death took 1.2 seconds of contact** — three hits at 0.6s apart, faster
+  than a player can react to being touched at all.
+
+Fixes, each measured:
+
+| | before | after |
+|---|---|---|
+| Sustainable flee speed | 4.04 m/s | 4.29 m/s |
+| Sprint burst | 6.0 s | 7.4 s |
+| Smiler closes over its hunt | 16 m | 9 m |
+| Time to die in contact | 1.2 s | 2.0 s |
+| Grace after the door moves | 2–5 s | 11 s |
+
+- `delayHunt()` pushes the next hunt *out* instead of pulling it in, so the
+  door relocation grants a real window to re-orient and run.
+- **The door is a sanctuary.** Within 6.5 m of a revealed exit the hunter
+  slows to as little as 30% speed and cannot swipe — opening a door takes
+  0.9 s of standing still, which was otherwise a guaranteed mauling.
+- Sprint economy 13 drain / 14 regen, attack cooldown 0.6 s → 1.0 s.
+
+The chase is still lost on paper — every hunter except the crawler is
+faster than you can sustain — but fleeing now buys ground, and the exit is
+salvation rather than the most dangerous place on the floor.
+
 ## Beta: save/progress + quit-to-title
 
 The shell crosses from alpha into beta with persistence and a real

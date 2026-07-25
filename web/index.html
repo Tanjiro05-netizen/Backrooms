@@ -1763,8 +1763,12 @@ function updatePlayer(dt){
   groundY+=(gT-groundY)*Math.min(1,dt*9);
   const spd=Math.hypot(player.vx,player.vz);
   player.moveAmt=spd;
-  if(sprint&&spd>0.5)player.stamina=Math.max(0,player.stamina-dt*16);
-  else player.stamina=Math.min(100,player.stamina+dt*11);
+  /* Sprint economy. At 16 drain / 11 regen the sustainable pace was 4.04 m/s —
+     below every hunter's speed, so once the first sprint ran out being caught
+     was arithmetic. 13/14 lifts it to ~4.3 m/s: still slower than the things
+     chasing you, but fleeing now buys real ground instead of postponing. */
+  if(sprint&&spd>0.5)player.stamina=Math.max(0,player.stamina-dt*13);
+  else player.stamina=Math.min(100,player.stamina+dt*14);
   let drain=(0.16+(player.lightOn?0.55:0)+(player.ir?0.42:0))*diff.drain;
   player.battery=Math.max(0,player.battery-dt*drain);
   if(player.battery<=0){player.lightOn=false;player.ir=false;syncNVOsd();}
@@ -2462,6 +2466,16 @@ function updateEntity(dt,t){
       }
     }
     E.speedNow=Math.min(HUNT_MAX,entBaseSpeed(def,m)*diff.speed*mult*HUNT_AGGRO*(1+Math.min(0.4,tapesFound*0.05)));
+    /* sanctuary: the closer the player is to a revealed door, the more it
+       hesitates — reaching the exit is meant to be salvation, not a trap */
+    let atExit=false;
+    if(exitObj&&exitObj.revealed){
+      const ed=Math.hypot(player.pos.x-exitObj.wx,player.pos.z-exitObj.wz);
+      if(ed<EXIT_SAFE_R){
+        atExit=true;
+        E.speedNow*=0.30+0.70*(ed/EXIT_SAFE_R);   /* crawls as you reach the door */
+      }
+    }
     if(E.repath<=0){
       E.distField=bfsFrom(worldToCellX(player.pos.x),worldToCellZ(player.pos.z));
       E.repath=0.55;
@@ -2484,7 +2498,7 @@ function updateEntity(dt,t){
     faceTo(ddx,ddz);
     def.animate(E,dt,t,Math.min(1,E.speedNow/4),0);
     /* swipe attack: chunk of health + knockback, not an instant kill */
-    if(dist<def.catchR+ATK_REACH&&player.attackCD<=0){
+    if(dist<def.catchR+ATK_REACH&&player.attackCD<=0&&!atExit){
       player.attackCD=ATK_CD;
       damagePlayer(diff.dmg);
       const kb=3.4;                        /* shove the player away so hits can't chain-lock */
@@ -2544,6 +2558,10 @@ function despawnEntity(byGaze){
   if(byGaze)glitchSpike(0.8);
 }
 function scheduleHunt(d){entity.nextHunt=Math.min(entity.nextHunt,d);}
+/* Push the next hunt OUT rather than pulling it in. Used when the game has
+   just disoriented the player on purpose (the door tearing itself to a new
+   wall), so the scare lands as a scare and not as an ambush they cannot read. */
+function delayHunt(d){if(entity)entity.nextHunt=Math.max(entity.nextHunt,d);entity&&(entity.telegraphed=false);}
 
 /* =========================================================
    INTERACTION  ([E] / USE — tapes, doors)
@@ -2640,7 +2658,15 @@ function plunge(enter){
 const HUNT_AGGRO=1.28;   /* hunt speed = base * this ... */
 const HUNT_MAX=5.15;     /* ...clamped just under player sprint (5.4) so you can flee */
 const ATK_REACH=0.45;    /* extra reach beyond catchR for a swipe */
-const ATK_CD=0.6;        /* seconds between hits */
+/* The door is the one thing it will not crowd. Inside this radius of a
+   revealed exit the hunter hangs back and will not swipe — otherwise the
+   0.9s the door takes to open is a guaranteed mauling, since opening it
+   means standing still while something faster closes. */
+const EXIT_SAFE_R=6.5;
+/* Seconds between hits. At 0.6 a full-health player died in 1.2s of contact —
+   too fast to react, so a single wrong turn was fatal. 1.0 keeps three hits
+   lethal but gives a real window to break away. */
+const ATK_CD=1.0;
 function hurtSound(){
   if(!AC)return;
   noiseBurst(0.12,0.34,260,1.0);
@@ -3359,7 +3385,11 @@ function relocateExit(){
   glitchSpike(0.9);
   showMsg('THE TAPES SANG — A DOOR TORE ITSELF THROUGH A WALL NEARBY.',5600);
   document.getElementById('osdExit').style.display='block';
-  scheduleHunt(5*diff.hunt);
+  /* The last tape already pulled a hunt to 2-5s; combined with the door
+     moving, that read as an unavoidable ambush. Give the player a window to
+     re-orient and actually run for it — the hunt still comes, just not while
+     they are standing still reading the message. */
+  delayHunt(11*diff.hunt);
 }
 /* =========================================================
    WALL ARROWS — spray-painted wayfinding toward the exit.
