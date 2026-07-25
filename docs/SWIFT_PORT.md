@@ -36,7 +36,8 @@ is built alongside it; both live in the same repo and share fixtures.
 | Entity idle/seen phases (sighting, flee, gaze-vanish, stalker reposition) | ⬜ next | — | mixes seeded + Math.random; scenario fixtures with seeded random |
 | Tapes / items / exits / level flow | ⬜ | — | pure logic, easy fixtures |
 | Nerve/sanity + horror director | ⬜ | — | port schedules; keep event weights |
-| **Renderer (Metal)** | ⬜ | — | see below |
+| Camera / matrix math (`Mat4`, `Camera`) | ✅ BackroomsCore | ✅ view+proj vs Three.js, exact | YXZ euler + GL and Metal depth conventions |
+| **Renderer (Metal)** | ⬜ next | — | mesh upload + forward pass; see below |
 | Audio (AVAudioEngine) | ⬜ | — | procedural synth port of the WebAudio graph |
 | Input (touch/gyro) | ⬜ | — | reuse shell's Core Motion work |
 
