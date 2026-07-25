@@ -3535,6 +3535,7 @@ function descend(){
   document.getElementById('ovlLevel').style.display='flex';
   /* checkpoint: the deeper floor is now reached and unlocked for CONTINUE */
   PROGRESS.runLevel=levelIdx+1;PROGRESS.maxLevel=Math.max(PROGRESS.maxLevel|0,levelIdx+1);saveProgress();
+  nativePost('depth',{level:levelIdx+1});   /* Game Center depth leaderboard */
   setTimeout(()=>{buildLevel(levelIdx+1);},650);
   setTimeout(()=>{
     document.getElementById('ovlLevel').style.display='none';
@@ -3559,6 +3560,9 @@ function win(){
   if(newBest)PROGRESS.bestTime=gameTime;
   if(tapesFound>(PROGRESS.bestTapes|0))PROGRESS.bestTapes=tapesFound;
   saveProgress();
+  /* Game Center: the run that got out (native shell only; no-op in a browser) */
+  nativePost('escaped',{seconds:gameTime,tapes:tapesFound,deaths:deaths});
+  nativePost('depth',{level:3});
   document.getElementById('winStats').innerHTML=
     'RUNTIME&nbsp; '+fmtTime(gameTime)+(newBest?'&nbsp; ◂ NEW BEST':'')+
     '<br>TAPES&nbsp; '+tapesFound+'/8<br>LEVELS CLEARED&nbsp; 4/4<br>SIGNAL LOSSES&nbsp; '+deaths+

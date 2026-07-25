@@ -12,6 +12,7 @@
 		A10000000000000000000004 /* BackroomsWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000014 /* BackroomsWebView.swift */; };
 		A10000000000000000000005 /* web in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000020 /* web */; };
 		A10000000000000000000006 /* assets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000021 /* assets */; };
+		A10000000000000000000008 /* GameCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* GameCenter.swift */; };
 		A10000000000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -22,6 +23,7 @@
 		A10000000000000000000013 /* GameContainerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameContainerView.swift; sourceTree = "<group>"; };
 		A10000000000000000000014 /* BackroomsWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackroomsWebView.swift; sourceTree = "<group>"; };
 		A10000000000000000000015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A10000000000000000000017 /* GameCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCenter.swift; sourceTree = "<group>"; };
 		A10000000000000000000016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A10000000000000000000020 /* web */ = {isa = PBXFileReference; lastKnownFileType = folder; name = web; path = ../../web; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000021 /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = assets; path = ../../assets; sourceTree = SOURCE_ROOT; };
@@ -29,7 +31,7 @@
 
 /* Begin PBXGroup section */
 		A10000000000000000000030 = {isa = PBXGroup; children = (A10000000000000000000031 /* BackroomsIOS */, A10000000000000000000032 /* Products */, A10000000000000000000020 /* web */, A10000000000000000000021 /* assets */); sourceTree = "<group>"; };
-		A10000000000000000000031 /* BackroomsIOS */ = {isa = PBXGroup; children = (A10000000000000000000011 /* AppDelegate.swift */, A10000000000000000000012 /* BackroomsIOSApp.swift */, A10000000000000000000013 /* GameContainerView.swift */, A10000000000000000000014 /* BackroomsWebView.swift */, A10000000000000000000016 /* Assets.xcassets */, A10000000000000000000015 /* Info.plist */); path = BackroomsIOS; sourceTree = "<group>"; };
+		A10000000000000000000031 /* BackroomsIOS */ = {isa = PBXGroup; children = (A10000000000000000000011 /* AppDelegate.swift */, A10000000000000000000012 /* BackroomsIOSApp.swift */, A10000000000000000000013 /* GameContainerView.swift */, A10000000000000000000014 /* BackroomsWebView.swift */, A10000000000000000000017 /* GameCenter.swift */, A10000000000000000000016 /* Assets.xcassets */, A10000000000000000000015 /* Info.plist */); path = BackroomsIOS; sourceTree = "<group>"; };
 		A10000000000000000000032 /* Products */ = {isa = PBXGroup; children = (A10000000000000000000010 /* BackroomsIOS.app */); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -46,7 +48,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		A10000000000000000000050 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001 /* AppDelegate.swift in Sources */, A10000000000000000000002 /* BackroomsIOSApp.swift in Sources */, A10000000000000000000003 /* GameContainerView.swift in Sources */, A10000000000000000000004 /* BackroomsWebView.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000050 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001 /* AppDelegate.swift in Sources */, A10000000000000000000002 /* BackroomsIOSApp.swift in Sources */, A10000000000000000000003 /* GameContainerView.swift in Sources */, A10000000000000000000004 /* BackroomsWebView.swift in Sources */, A10000000000000000000008 /* GameCenter.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXFrameworksBuildPhase section */

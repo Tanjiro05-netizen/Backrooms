@@ -60,6 +60,31 @@ working without a server or CDN.
 - External links open in Safari rather than replacing the game document.
 - Web Inspector enabled for Debug builds (Safari → Develop → your device).
 
+## Game Center
+
+The app reports to Game Center when a run ends. It is entirely optional: if
+the player declines sign-in or is offline, the game behaves exactly as before
+and never surfaces an error.
+
+Before any of it does anything on device, create these in **App Store Connect
+▸ your app ▸ Features ▸ Game Center**, and enable the **Game Center**
+capability in Xcode ▸ Signing & Capabilities:
+
+| Kind | Identifier | Notes |
+|---|---|---|
+| Leaderboard | `com.backrooms.escape.fastest` | Fastest escape. Submitted in **hundredths of a second**, sort ascending (low is best). |
+| Leaderboard | `com.backrooms.depth.deepest` | Deepest floor index reached (0–3), sort descending. |
+| Achievement | `com.backrooms.achievement.firstdescent` | Reached Level 1. |
+| Achievement | `com.backrooms.achievement.poolrooms` | Reached Level 37. |
+| Achievement | `com.backrooms.achievement.escaped` | Completed a run. |
+| Achievement | `com.backrooms.achievement.alltapes` | Escaped with all 8 tapes. |
+| Achievement | `com.backrooms.achievement.nodeaths` | Escaped without a single signal loss. |
+
+If you rename any of them, change the matching constant in
+`GameCenter.swift`. The web game emits the underlying events over the
+existing `backroomsNative` bridge (`escaped`, `depth`), so a browser build
+simply ignores them.
+
 ## Intentionally deferred
 
 Game Center, CloudKit, microphone/voice chat, gyro calibration UI, and StoreKit
