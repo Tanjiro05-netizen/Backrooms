@@ -108,6 +108,12 @@
   .seg button:hover{background:rgba(242,240,228,.08)}
   .seg button.on{background:rgba(242,240,228,.85);color:#0a0a08;text-shadow:none}
   .setHint{font-size:clamp(9px,1vw,12px);letter-spacing:.16em;opacity:.4;margin-top:.3em}
+  .saveLine{margin-top:1.4em;font-size:clamp(10px,1.2vw,14px);letter-spacing:.2em;color:#9dffb5;opacity:.8;
+    text-shadow:0 0 8px rgba(157,255,181,.4),0 0 2px #000}
+  #btnPause{position:absolute;pointer-events:auto;top:calc(3.2% + env(safe-area-inset-top,0px));
+    left:50%;transform:translateX(-50%);width:11vmin;height:11vmin;max-width:56px;max-height:56px;
+    border-radius:50%;border:2px solid rgba(255,255,255,.22);background:rgba(0,0,0,.28);
+    color:var(--osd);font-family:inherit;font-weight:700;font-size:3.4vmin;letter-spacing:-.05em}
 </style>
 </head>
 <body>
@@ -140,6 +146,7 @@
   <button class="tbtn" id="btnNV">NV</button>
   <button class="tbtn" id="btnUse" style="display:none;right:42%;bottom:10%">USE</button>
   <button class="tbtn" id="btnHeal">DRINK</button>
+  <button id="btnPause" aria-label="Pause">❚❚</button>
 </div>
 
 <div class="ovl" id="ovlStart">
@@ -155,9 +162,11 @@
     [E] INTERACT&nbsp;&nbsp;[F] CAMERA LIGHT&nbsp;&nbsp;[N] NIGHTSHOT IR&nbsp;&nbsp;[Q] DRINK</span>
   </div>
   <div class="btnrow">
+    <button class="btn" id="btnContinue" style="display:none">▶▶ CONTINUE</button>
     <button class="btn" id="btnPlay">► PLAY</button>
     <button class="btn sm" id="btnPlaySimple">○ SIMPLE MODE</button>
   </div>
+  <div class="saveLine" id="saveLine" style="display:none"></div>
   <div class="settings" id="settingsPanel">
     <div class="setRow">
       <span class="setLabel">TAPE FILTER</span>
@@ -192,7 +201,11 @@
   <div class="scan"></div>
   <h1>⏸ PAUSE</h1>
   <div class="sub">PLAYBACK INTERRUPTED</div>
-  <button class="btn" id="btnResume">► RESUME</button>
+  <div class="btnrow">
+    <button class="btn" id="btnResume">► RESUME</button>
+    <button class="btn sm" id="btnQuit">◄ QUIT TO TITLE</button>
+  </div>
+  <div class="setHint" style="margin-top:1.6em">PROGRESS TO THIS FLOOR IS SAVED</div>
 </div>
 
 <div class="ovl" id="ovlLevel">
@@ -282,6 +295,21 @@ const SETTINGS=(function(){
   return d;
 })();
 function saveSettings(){try{localStorage.setItem('br_settings',JSON.stringify(SETTINGS));}catch(e){}}
+/* =========================================================
+   PROGRESS / SAVE  (persisted; mirrored to iCloud on native)
+   Floor-granularity checkpoint: quitting or dying keeps the
+   deepest floor reached so the title can offer CONTINUE.
+   ========================================================= */
+const PROGRESS=(function(){
+  const d={maxLevel:0,runLevel:null,mode:'standard',bestTime:null,bestTapes:0,runs:0,wins:0,deaths:0};
+  try{const s=JSON.parse(localStorage.getItem('br_progress')||'{}');Object.assign(d,s);}catch(e){}
+  return d;
+})();
+function saveProgress(){
+  try{localStorage.setItem('br_progress',JSON.stringify(PROGRESS));}catch(e){}
+  /* the native shell persists this to iCloud key-value when present */
+  try{nativePost('progress',{data:PROGRESS});}catch(e){}
+}
 
 /* ---------- PRNG / noise ---------- */
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
@@ -2115,7 +2143,9 @@ const ENTITY_DEFS={
    url — e.g. the original smiler.glb is still in assets/models/entities/. */
 const ENTITY_MODELS={
   smiler :{url:'../assets/models/entities/stickman_tall.glb',   scale:1.0, yOffset:0, yRot:0},
-  hound  :{url:'../assets/models/entities/stickman_hound.glb',  scale:1.0, yOffset:0, yRot:0},
+  /* Level 1: authored creature (FBX -> GLB, cm -> m, so scale 0.01). One
+     baked clip, so animModel loops it and scales playback with speed. */
+  hound  :{url:'../assets/models/entities/level1_creature.glb', scale:0.011, yOffset:0, yRot:0},
   crawler:{url:'../assets/models/entities/stickman_crawler.glb',scale:1.0, yOffset:0, yRot:0},
   drowned:{url:'../assets/models/entities/stickman_drowned.glb',scale:1.0, yOffset:0, yRot:0}
 };
@@ -2138,7 +2168,8 @@ const FORMAT_LOADERS={
   glb:{deps:[],make:()=>new THREE.GLTFLoader(),
        norm:r=>({scene:r.scene,animations:r.animations||[]})},
   gltf:{alias:'glb'},
-  fbx:{deps:[_U+'libs/fflate.min.js',_U+'loaders/FBXLoader.js'],
+  /* fflate + FBXLoader are vendored in web/lib so .fbx works offline too */
+  fbx:{deps:['lib/fflate.min.js','lib/FBXLoader.js'],
        make:()=>new THREE.FBXLoader(),
        norm:o=>({scene:o,animations:o.animations||[]})},
   obj:{deps:[_U+'loaders/OBJLoader.js'],make:()=>new THREE.OBJLoader(),
@@ -2203,6 +2234,8 @@ function applyEntityModel(E,root,animations,spec){
     const first=E.clips.idle?'idle':animations[0].name.toLowerCase();
     E.action=E.mixer.clipAction(E.clips[first]);E.action.play();
     E.curClip=first;
+    /* no named idle/walk/attack set -> treat as a single looping clip */
+    E.singleClip=!(E.clips.walk||E.clips.attack||E.clips.idle);
   }
   E.def=Object.assign({},E.def,{animate:animModel});
 }
@@ -2211,6 +2244,17 @@ function applyEntityModel(E,root,animations,spec){
    twitch on top of whatever the mixer wrote this frame */
 function animModel(E,dt,t,mv,att){
   if(!E.mixer){return;}
+  /* single-clip models (most authored/AI-generated creatures ship one loop):
+     keep it playing and let the speed scaling below sell idle vs. charge */
+  if(E.singleClip){
+    if(E.action){
+      const spd=(E.state==='hunt')?(E.speedNow||3):mv*3.5;
+      E.action.timeScale=Math.min(2.4,Math.max(0.35,0.35+spd/3.2));
+    }
+    E.mixer.update(dt);
+    if(E.headNode){twitch(E,dt);E.headNode.rotation.x+=E.twRX*0.45;E.headNode.rotation.z+=E.twRZ*0.45;}
+    return;
+  }
   const want=(att>0.05&&E.clips.attack)?'attack'
     :(mv>0.06&&E.clips.walk)?'walk'
     :(E.clips.idle?'idle':E.curClip);
@@ -2229,6 +2273,88 @@ function animModel(E,dt,t,mv,att){
     twitch(E,dt);
     E.headNode.rotation.x+=E.twRX*0.45;
     E.headNode.rotation.z+=E.twRZ*0.45;
+  }
+}
+/* =========================================================
+   LIMINAL MONUMENT — a landmark that should not be here.
+   One per qualifying floor, placed far from spawn in an open
+   zone. It never moves and never chases; it simply exists,
+   lit wrong, humming, and standing where a warehouse should
+   have nothing. Getting close erodes nerve.
+   ========================================================= */
+const MONUMENTS={
+  warehouse:{url:'../assets/models/props/monument.glb',scale:2.6,yOffset:0,
+    light:0xffe0a0,lightI:1.5,lightD:11,hum:52}
+};
+let monument=null;
+function clearMonument(){
+  if(!monument)return;
+  monument.g.traverse(o=>{if(o.geometry)o.geometry.dispose();});
+  scene.remove(monument.g);
+  if(monument.hum){try{monument.hum.stop();}catch(e){}monument.hum=null;}
+  monument=null;
+}
+function buildMonument(){
+  clearMonument();
+  const spec=MONUMENTS[LV.theme];
+  if(!spec||typeof THREE.GLTFLoader!=='function')return;
+  /* place it far from spawn, in an open zone cell, away from the exit */
+  const df=bfsFrom(SPAWN_CX,SPAWN_CZ);
+  const cands=[];
+  for(let z=2;z<GH-2;z++)for(let x=2;x<GW-2;x++){
+    const d=df[x+z*GW];
+    if(d<10||pillarMask[x+z*GW]||!zoneMask[x+z*GW])continue;
+    if(exitObj&&Math.hypot(cellWX(x)-exitObj.wx,cellWZ(z)-exitObj.wz)<CS*3)continue;
+    cands.push([x,z,d]);
+  }
+  if(!cands.length)return;
+  cands.sort((a,b)=>b[2]-a[2]);                       /* prefer the deepest reachable */
+  const pick=cands[Math.floor(lrng()*Math.min(cands.length,12))];
+  const wx=cellWX(pick[0]),wz=cellWZ(pick[1]);
+  const g=new THREE.Group();
+  g.position.set(wx,groundAt(wx,wz)+(spec.yOffset||0),wz);
+  g.rotation.y=lrng()*6.283;
+  scene.add(g);
+  const gl=new THREE.PointLight(spec.light,spec.lightI,spec.lightD,2);
+  gl.position.set(0,1.4,0);g.add(gl);
+  monument={g,wx,wz,light:gl,loaded:false,hum:null,t:0};
+  new THREE.GLTFLoader().load(spec.url,res=>{
+    if(!monument||monument.g!==g)return;                /* level changed mid-load */
+    const root=res.scene;
+    root.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;o.frustumCulled=true;}});
+    root.scale.setScalar(spec.scale||1);
+    g.add(root);
+    monument.loaded=true;
+    startMonumentHum(spec.hum);
+  },undefined,()=>{ /* missing model: keep the light as a lonely glow */ });
+}
+/* a low tone that only exists near the monument */
+function startMonumentHum(freq){
+  if(!AC||!monument)return;
+  try{
+    const o=AC.createOscillator();o.type='sine';o.frequency.value=freq||52;
+    const g2=AC.createGain();g2.gain.value=0;
+    o.connect(g2);g2.connect(masterGain);o.start();
+    monument.hum=o;monument.humGain=g2;
+  }catch(e){}
+}
+function updateMonument(dt,t){
+  if(!monument)return;
+  const d=Math.hypot(player.pos.x-monument.wx,player.pos.z-monument.wz);
+  monument.t+=dt;
+  /* the light breathes; the whole thing turns imperceptibly */
+  if(monument.light)monument.light.intensity=1.5*(0.82+0.18*Math.sin(monument.t*0.7));
+  monument.g.rotation.y+=dt*0.012;
+  if(monument.humGain){
+    const want=Math.max(0,1-d/16)*0.05;
+    monument.humGain.gain.value+=(want-monument.humGain.gain.value)*Math.min(1,dt*2);
+  }
+  /* standing in its presence is not good for you */
+  if(state==='play'&&d<7)player.sanity=Math.max(0,player.sanity-dt*1.4);
+  if(state==='play'&&d<11&&!monument.seen){
+    monument.seen=true;
+    showMsg('THIS WAS NOT IN THE FLOOR PLAN.',4200);
+    glitchSpike(0.5);
   }
 }
 function buildEntity(kind){
@@ -2536,6 +2662,7 @@ let dying=null;
 function die(){
   if(state!=='play')return;
   deaths++;
+  PROGRESS.deaths=(PROGRESS.deaths|0)+1;saveProgress();
   haptic([120,60,200]);
   state='dying';
   const f=getCamForward();
@@ -3371,7 +3498,7 @@ function buildLevel(i){
   GW=LV.grid;GH=LV.grid;CS=LV.cs;WH=LV.wh;UVS=LV.uvs;
   VVS=(LV.theme==='pool')?1.5:WH;
   SPAWN_CX=Math.max(3,Math.round(GW*0.16));SPAWN_CZ=GH>>1;
-  clearTapes();clearItems();clearExit();
+  clearTapes();clearItems();clearExit();clearMonument();
   teardownWorld();
   WALL_AO_U.value=WH;
   allocMap();
@@ -3385,6 +3512,7 @@ function buildLevel(i){
   buildTapes(LV.tapes);
   buildItems();
   placeExitFar();
+  buildMonument();          /* after the exit, so it can avoid it */
   buildWallArrows();
   player.pos.set(cellWX(SPAWN_CX),EYE,cellWZ(SPAWN_CZ));
   player.vx=0;player.vz=0;player.yaw=-Math.PI/2;player.pitch=0;
@@ -3405,6 +3533,8 @@ function descend(){
   document.getElementById('lvlName').textContent=nxt.name;
   document.getElementById('lvlSub').textContent=nxt.sub;
   document.getElementById('ovlLevel').style.display='flex';
+  /* checkpoint: the deeper floor is now reached and unlocked for CONTINUE */
+  PROGRESS.runLevel=levelIdx+1;PROGRESS.maxLevel=Math.max(PROGRESS.maxLevel|0,levelIdx+1);saveProgress();
   setTimeout(()=>{buildLevel(levelIdx+1);},650);
   setTimeout(()=>{
     document.getElementById('ovlLevel').style.display='none';
@@ -3422,8 +3552,17 @@ function win(){
   if(state!=='play')return;
   state='win';
   try{document.exitPointerLock();}catch(e){}
+  /* record the completed run; a finished run clears the resume checkpoint */
+  PROGRESS.wins=(PROGRESS.wins|0)+1;
+  PROGRESS.runLevel=null;PROGRESS.maxLevel=3;
+  const newBest=(PROGRESS.bestTime==null||gameTime<PROGRESS.bestTime);
+  if(newBest)PROGRESS.bestTime=gameTime;
+  if(tapesFound>(PROGRESS.bestTapes|0))PROGRESS.bestTapes=tapesFound;
+  saveProgress();
   document.getElementById('winStats').innerHTML=
-    'RUNTIME&nbsp; '+fmtTime(gameTime)+'<br>TAPES&nbsp; '+tapesFound+'/8<br>LEVELS CLEARED&nbsp; 4/4<br>SIGNAL LOSSES&nbsp; '+deaths;
+    'RUNTIME&nbsp; '+fmtTime(gameTime)+(newBest?'&nbsp; ◂ NEW BEST':'')+
+    '<br>TAPES&nbsp; '+tapesFound+'/8<br>LEVELS CLEARED&nbsp; 4/4<br>SIGNAL LOSSES&nbsp; '+deaths+
+    '<br>BEST ESCAPE&nbsp; '+fmtTime(PROGRESS.bestTime);
   document.getElementById('ovlWin').style.display='flex';
 }
 
@@ -3665,8 +3804,13 @@ function bindUI(){
   document.getElementById('gyroRow').style.display=touch.active?'flex':'none';
   document.getElementById('btnPlay').addEventListener('click',()=>startGame('standard'));
   document.getElementById('btnPlaySimple').addEventListener('click',()=>startGame('simple'));
+  document.getElementById('btnContinue').addEventListener('click',()=>startGame(PROGRESS.mode||'standard',true));
   document.getElementById('btnResume').addEventListener('click',resumeGame);
+  document.getElementById('btnQuit').addEventListener('click',quitToTitle);
   document.getElementById('btnRetry').addEventListener('click',retryLevel);
+  const bp=document.getElementById('btnPause');
+  if(bp)bp.addEventListener('click',()=>{if(state==='play')showPause(true);else if(state==='pause')resumeGame();});
+  refreshTitleSave();
   initSettingsUI();
   /* Losing pointer-lock (Esc) pauses ONLY if the player was in locked FPS mode.
      Drag-to-look never locks, so trackpad users are never force-paused. */
@@ -3677,8 +3821,14 @@ function bindUI(){
   });
   document.addEventListener('contextmenu',e=>e.preventDefault());
 }
-function startGame(mode){
+function startGame(mode,resume){
   diff=DIFFS[mode]||DIFFS.standard;
+  /* fresh run starts at floor 0; CONTINUE resumes the deepest floor reached */
+  const startLevel=resume?Math.max(0,Math.min(3,PROGRESS.maxLevel|0)):0;
+  gameTime=0;deaths=0;tapesFound=0;
+  PROGRESS.mode=mode;PROGRESS.runLevel=startLevel;PROGRESS.maxLevel=Math.max(PROGRESS.maxLevel|0,startLevel);
+  PROGRESS.runs=(PROGRESS.runs|0)+1;saveProgress();
+  if(startLevel!==levelIdx)buildLevel(startLevel);
   if(diff.beaconAlways&&exitObj)document.getElementById('osdExit').style.display='block';
   initAudio();
   if(AC&&AC.resume)AC.resume();
@@ -3696,13 +3846,50 @@ function startGame(mode){
 }
 function showPause(on){
   document.getElementById('ovlPause').style.display=on?'flex':'none';
-  if(on)state='pause';
+  if(on){state='pause';if(AC&&AC.suspend)AC.suspend();}
 }
 function resumeGame(){
   showPause(false);
   state='play';
   if(AC&&AC.resume)AC.resume();
   syncNativeGyro();
+}
+/* leave the current run and return to the title. The deepest floor reached
+   stays saved, so CONTINUE picks the descent back up. */
+function quitToTitle(){
+  document.getElementById('ovlPause').style.display='none';
+  document.getElementById('ovlRetry').style.display='none';
+  try{document.exitPointerLock();}catch(e){}
+  if(AC&&AC.suspend)AC.suspend();
+  if(entity){entity.state='idle';entity.mesh.visible=false;}
+  droneTarget=0;blackoutT=0;glimpseT=0;humCutT=0;
+  state='menu';
+  refreshTitleSave();
+  document.getElementById('ovlStart').style.display='flex';
+}
+/* title screen CONTINUE button + best-run readout */
+function refreshTitleSave(){
+  const btn=document.getElementById('btnContinue');
+  const line=document.getElementById('saveLine');
+  const canResume=(PROGRESS.maxLevel|0)>0;
+  if(btn){
+    if(canResume){
+      const lv=Math.max(0,Math.min(3,PROGRESS.maxLevel|0));
+      btn.textContent='▶▶ CONTINUE — '+(lv===3?'LEVEL 37':'LEVEL '+lv);
+      btn.style.display='';
+    }else btn.style.display='none';
+  }
+  if(line){
+    if((PROGRESS.wins|0)>0&&PROGRESS.bestTime!=null){
+      line.innerHTML='BEST ESCAPE&nbsp; '+fmtTime(PROGRESS.bestTime)+'&nbsp;&nbsp;·&nbsp;&nbsp;TAPES&nbsp; '
+        +(PROGRESS.bestTapes|0)+'/8&nbsp;&nbsp;·&nbsp;&nbsp;RUNS&nbsp; '+(PROGRESS.runs|0);
+      line.style.display='';
+    }else if((PROGRESS.runs|0)>0){
+      line.innerHTML='DEEPEST&nbsp; '+((PROGRESS.maxLevel|0)===3?'LEVEL 37':'LEVEL '+(PROGRESS.maxLevel|0))
+        +'&nbsp;&nbsp;·&nbsp;&nbsp;RUNS&nbsp; '+(PROGRESS.runs|0)+'&nbsp;&nbsp;·&nbsp;&nbsp;SIGNAL LOSSES&nbsp; '+(PROGRESS.deaths|0);
+      line.style.display='';
+    }else line.style.display='none';
+  }
 }
 function showMsg(txt,ms){
   elMsg.textContent='▮ '+txt+' ▮';
@@ -3747,6 +3934,8 @@ function hudTick(dt){
   const carrying=state==='play'&&player.hasWater;
   elItem.style.display=carrying&&!touch.active?'block':'none';
   if(elHeal)elHeal.style.display=carrying&&touch.active?'block':'none';
+  const bpause=document.getElementById('btnPause');
+  if(bpause)bpause.style.display=(touch.active&&(state==='play'||state==='pause'))?'block':'none';
   /* camcorder zoom rocker readout (W ▮▮▯▯ T) */
   const ez=document.getElementById('osdZoom');
   if(ez){
@@ -3818,6 +4007,7 @@ function loop(now){
     updateTapes(dt,t);
     updateItems(dt,t);
     updateExit(dt);
+    updateMonument(dt,t);
     updateDirector(dt,t);
   }
   if(state==='menu')player.yaw+=dt*0.05;
