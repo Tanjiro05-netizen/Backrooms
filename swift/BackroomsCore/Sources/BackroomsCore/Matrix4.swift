@@ -93,18 +93,25 @@ public struct Mat4: Equatable, Sendable {
     public static func view(positionX px: Float, y py: Float, z pz: Float,
                             pitch: Float, yaw: Float, roll: Float) -> Mat4 {
         let r = rotationYXZ(pitch: pitch, yaw: yaw, roll: roll)
-        // Transposed basis.
-        let t00 = r[0,0], t01 = r[0,1], t02 = r[0,2]
-        let t10 = r[1,0], t11 = r[1,1], t12 = r[1,2]
-        let t20 = r[2,0], t21 = r[2,1], t22 = r[2,2]
-        // −Rᵀ · position
-        let tx = -(t00 * px + t10 * py + t20 * pz)
-        let ty = -(t01 * px + t11 * py + t21 * pz)
-        let tz = -(t02 * px + t12 * py + t22 * pz)
-        return Mat4([ t00, t01, t02, 0,
-                      t10, t11, t12, 0,
-                      t20, t21, t22, 0,
-                      tx,  ty,  tz,  1 ])
+        var out = [Float](repeating: 0, count: 16)
+        out[15] = 1
+
+        // Rotation block is Rᵀ: V_ij = R_ji. Storage is [col, row], so element
+        // (row i, col j) of the view lands where element (row j, col i) of R
+        // came from. Doing this with explicit indices rather than named
+        // t00/t01/… avoids quietly reading a column where a row was meant —
+        // which is exactly the bug this replaces.
+        for i in 0..<3 {
+            for j in 0..<3 {
+                out[j * 4 + i] = r[i, j]
+            }
+        }
+        // Translation is −Rᵀ·p, i.e. the camera position projected onto the
+        // camera's own axes: V_i3 = −(R_0i·px + R_1i·py + R_2i·pz).
+        for i in 0..<3 {
+            out[12 + i] = -(r[i, 0] * px + r[i, 1] * py + r[i, 2] * pz)
+        }
+        return Mat4(out)
     }
 
     // MARK: - Ops
