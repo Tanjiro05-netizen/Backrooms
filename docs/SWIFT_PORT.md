@@ -37,7 +37,7 @@ is built alongside it; both live in the same repo and share fixtures.
 | Tapes / items / exits / level flow | ⬜ | — | pure logic, easy fixtures |
 | Nerve/sanity + horror director | ⬜ | — | port schedules; keep event weights |
 | Camera / matrix math (`Mat4`, `Camera`) | ✅ BackroomsCore | ✅ view+proj vs Three.js, exact | YXZ euler + GL and Metal depth conventions |
-| **Renderer (Metal)** | ⬜ next | — | mesh upload + forward pass; see below |
+| **Renderer (Metal)** | 🟡 BackroomsRender | ✅ layout/mesh/light tests | forward pass, uniforms, mesh upload done; textures + app target next |
 | Audio (AVAudioEngine) | ⬜ | — | procedural synth port of the WebAudio graph |
 | Input (touch/gyro) | ⬜ | — | reuse shell's Core Motion work |
 
