@@ -1,5 +1,23 @@
 # Enhancements & Research Notes
 
+## SIMPLE mode: guided and genuinely finishable
+
+SIMPLE was only *slightly* easier than standard, which made it useless both
+for new players and for testing a change end to end. It is now a real
+guided mode:
+
+- **Tapes are marked through walls** with an amber chevron (the same
+  depth-test-off trick the exit uses) plus a `TAPE ▸ nnM` bearing and
+  compass arrow on the HUD, colour-coded amber against the exit's green.
+  Finding the objective is no longer a sweep of the floor.
+- Hunts are **3.2× rarer**, entities move at **60%** speed for **45%** as
+  long, and hit for **10** instead of 34 — around three times weaker.
+- Battery drains at half rate and nerve erodes at 30%.
+
+Because level 0's tapes are generated during init — before the player has
+chosen a difficulty — `applyTapeHints()` adds or strips the markers when a
+run actually starts, so the choice applies retroactively to the first floor.
+
 ## Balance: the exit was a death trap
 
 Reaching the first exit reliably killed the player, and the cause was

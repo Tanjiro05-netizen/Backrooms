@@ -37,6 +37,11 @@
   #threatDot{width:.7em;height:.7em;border-radius:50%;background:#6b6b6b;box-shadow:0 0 8px currentColor}
   #osdThreat.stalk{color:#ffcf6b}#osdThreat.stalk #threatDot{background:#ffcf6b}
   #osdThreat.hunt{color:#ff3b3b}#osdThreat.hunt #threatDot{background:#ff2222;animation:blink .4s steps(1) infinite}
+  #osdTape{top:13.5%;left:50%;transform:translateX(-50%);color:#ffd27a;display:none;text-align:center}
+  #tapeArrow{position:fixed;top:46%;left:50%;width:clamp(34px,5vw,60px);height:clamp(34px,5vw,60px);
+    margin:calc(clamp(34px,5vw,60px)/-2) 0 0 calc(clamp(34px,5vw,60px)/-2);
+    transform-origin:50% 50%;z-index:19;pointer-events:none;opacity:0;transition:opacity .5s;
+    filter:drop-shadow(0 0 6px rgba(255,210,122,.8)) drop-shadow(0 0 2px #000)}
   #exitArrow{position:fixed;top:36%;left:50%;width:clamp(46px,7vw,84px);height:clamp(46px,7vw,84px);
     margin:calc(clamp(46px,7vw,84px)/-2) 0 0 calc(clamp(46px,7vw,84px)/-2);
     transform-origin:50% 50%;z-index:19;pointer-events:none;opacity:0;transition:opacity .5s;
@@ -127,6 +132,8 @@
 <div class="osd" id="osdZoom" style="top:8.5%;right:4%;text-align:right;display:none">W&#8195;&#9646;&#9646;&#9646;&#9647;&#9647;&#8195;T</div>
 <div class="osd" id="osdAF">AF</div>
 <div class="osd" id="osdExit">EXIT ▸ --M</div>
+<div class="osd" id="osdTape">TAPE ▸ --M</div>
+<div id="tapeArrow"><svg viewBox="0 0 100 100" width="100%" height="100%"><path d="M50 6 L82 62 L50 46 L18 62 Z" fill="#ffd27a"/></svg></div>
 <div class="osd" id="osdThreat"><span id="threatDot"></span><span id="threatTxt">DORMANT</span></div>
 <div id="osdMsg"></div>
 <div id="hitFlash"></div>
@@ -164,7 +171,7 @@
   <div class="btnrow">
     <button class="btn" id="btnContinue" style="display:none">▶▶ CONTINUE</button>
     <button class="btn" id="btnPlay">► PLAY</button>
-    <button class="btn sm" id="btnPlaySimple">○ SIMPLE MODE</button>
+    <button class="btn sm" id="btnPlaySimple">○ SIMPLE MODE — GUIDED</button>
   </div>
   <div class="saveLine" id="saveLine" style="display:none"></div>
   <div class="settings" id="settingsPanel">
@@ -194,7 +201,7 @@
     </div>
     <div class="setHint">IN-GAME:&nbsp; [V] CYCLE FILTER&nbsp;&nbsp;·&nbsp;&nbsp;[B] TOGGLE 4:3</div>
   </div>
-  <div class="warn">SIMPLE MODE — CALMER ENTITIES · SLOWER BATTERY DRAIN · EXIT TONE FROM THE START<br><br>⚠ CONTAINS FLASHING LIGHTS / PHOTOSENSITIVITY WARNING ⚠<br>HEADPHONES RECOMMENDED — BEST ON DESKTOP</div>
+  <div class="warn">SIMPLE MODE — TAPES MARKED THROUGH WALLS · RARE, SLOW, WEAK ENTITIES · EXIT TONE FROM THE START<br><br>⚠ CONTAINS FLASHING LIGHTS / PHOTOSENSITIVITY WARNING ⚠<br>HEADPHONES RECOMMENDED — BEST ON DESKTOP</div>
 </div>
 
 <div class="ovl" id="ovlPause">
@@ -1543,9 +1550,15 @@ let gameTime=0,deaths=0,tapesFound=0,levelTapes=0;
 let glitchPulse=0,vhsU=null,wasLocked=false;
 let blackoutT=0,glimpseT=0,humCutT=0;   /* horror-director timers */
 function glitchSpike(v){glitchPulse=Math.max(glitchPulse,v);}
+/* hunt/sight are DELAY multipliers (higher = rarer), speed/huntTime/dmg scale
+   the threat itself. `tapeHints` puts a see-through marker over every tape and
+   a bearing on the HUD — SIMPLE is meant to be finishable while you learn the
+   floors, or while testing a change end to end. */
 const DIFFS={
-  standard:{label:'STANDARD',hunt:1.0,sight:1.0,speed:1.0,huntTime:1.0,drain:1.0,creep:1.0,beaconAlways:false,dmg:34,sanity:1.0},
-  simple:{label:'SIMPLE',hunt:2.0,sight:1.7,speed:0.78,huntTime:0.65,drain:0.6,creep:0.5,beaconAlways:true,dmg:20,sanity:0.45}
+  standard:{label:'STANDARD',hunt:1.0,sight:1.0,speed:1.0,huntTime:1.0,drain:1.0,creep:1.0,
+    beaconAlways:false,dmg:34,sanity:1.0,tapeHints:false},
+  simple:{label:'SIMPLE',hunt:3.2,sight:2.2,speed:0.60,huntTime:0.45,drain:0.5,creep:0.4,
+    beaconAlways:true,dmg:10,sanity:0.30,tapeHints:true}
 };
 let diff=DIFFS.standard;
 const keys={};
@@ -3181,15 +3194,70 @@ function makeTape(globalIdx,wx,wz){
   g.position.set(wx,groundAt(wx,wz)+0.03,wz);
   g.rotation.y=lrng()*6.28;
   body.castShadow=true;
+  /* SIMPLE mode: a chevron that renders through walls, same trick the exit
+     uses, so a tape can be found instead of stumbled over. The sprite is
+     un-rotated by the group's spin because sprites always face the camera. */
+  let marker=null;
+  if(diff.tapeHints){
+    marker=new THREE.Sprite(new THREE.SpriteMaterial(
+      {map:tapeMarkerTex(),transparent:true,opacity:0.85,depthTest:false,depthWrite:false}));
+    marker.renderOrder=998;
+    marker.position.set(0,1.15,0);
+    marker.scale.set(0.85,0.85,1);
+    g.add(marker);
+  }
   scene.add(g);
-  return {g,led:led.material,wx,wz,found:false};
+  return {g,led:led.material,marker,wx,wz,found:false};
+}
+/* the see-through "TAPE" chevron, built once and shared */
+let tapeMarkerTexRef=null;
+function tapeMarkerTex(){
+  if(tapeMarkerTexRef)return tapeMarkerTexRef;
+  const [c,x]=makeCanvas(128,128);
+  x.clearRect(0,0,128,128);
+  x.fillStyle='#ffd27a';
+  x.beginPath();x.moveTo(64,118);x.lineTo(24,64);x.lineTo(64,80);x.lineTo(104,64);x.closePath();x.fill();
+  x.font='bold 27px monospace';x.textAlign='center';
+  x.shadowColor='#ffb43c';x.shadowBlur=10;
+  x.fillText('TAPE',64,42);
+  tapeMarkerTexRef=new THREE.CanvasTexture(c);
+  tapeMarkerTexRef.encoding=THREE.sRGBEncoding;
+  return tapeMarkerTexRef;
 }
 function updateTapes(dt,t){
   for(let i=0;i<tapes.length;i++){
     const tp=tapes[i];
     if(tp.found)continue;
     tp.led.emissiveIntensity=(Math.sin(t*6+tp.wx)>0.6)?2.4:0.1;
+    if(tp.marker)tp.marker.position.y=1.15+Math.sin(t*2.1+tp.wx)*0.08;
   }
+}
+/* Level 0's tapes are built during init, before the player has picked a
+   difficulty, so the hint markers have to be applied (or stripped) after the
+   fact when a run actually starts. */
+function applyTapeHints(){
+  for(const tp of tapes){
+    if(diff.tapeHints&&!tp.marker){
+      const m=new THREE.Sprite(new THREE.SpriteMaterial(
+        {map:tapeMarkerTex(),transparent:true,opacity:0.85,depthTest:false,depthWrite:false}));
+      m.renderOrder=998;m.position.set(0,1.15,0);m.scale.set(0.85,0.85,1);
+      tp.g.add(m);tp.marker=m;
+    }else if(!diff.tapeHints&&tp.marker){
+      tp.g.remove(tp.marker);
+      if(tp.marker.material)tp.marker.material.dispose();
+      tp.marker=null;
+    }
+  }
+}
+/* nearest un-found tape, for the SIMPLE-mode HUD bearing */
+function nearestTape(){
+  let best=null,bd=Infinity;
+  for(const tp of tapes){
+    if(tp.found)continue;
+    const d=Math.hypot(tp.wx-player.pos.x,tp.wz-player.pos.z);
+    if(d<bd){bd=d;best=tp;}
+  }
+  return best?{tape:best,dist:bd}:null;
 }
 function pickupTape(tp){
   tp.found=true;tp.g.visible=false;
@@ -3482,6 +3550,20 @@ function buildWallArrows(){
   arrowMesh=new THREE.Mesh(g,mat);
   arrowMesh.renderOrder=2;
   scene.add(arrowMesh);
+}
+/* SIMPLE-mode tape bearing: distance + a compass arrow to the nearest tape
+   still on the floor, so the objective is findable rather than a sweep. */
+function updateTapeHint(){
+  const osd=document.getElementById('osdTape');
+  const arrow=document.getElementById('tapeArrow');
+  if(!osd||!arrow)return;
+  const near=(diff.tapeHints&&state==='play')?nearestTape():null;
+  if(!near){osd.style.display='none';arrow.style.opacity=0;return;}
+  osd.style.display='block';
+  osd.textContent='TAPE ▸ '+Math.round(near.dist)+'M';
+  const rel=Math.atan2(near.tape.wx-player.pos.x,near.tape.wz-player.pos.z)-(player.yaw+Math.PI);
+  arrow.style.opacity=0.8;
+  arrow.style.transform='rotate('+(-rel*180/Math.PI).toFixed(1)+'deg)';
 }
 function updateExit(dt){
   if(!exitObj)return;
@@ -3863,6 +3945,7 @@ function startGame(mode,resume){
   PROGRESS.mode=mode;PROGRESS.runLevel=startLevel;PROGRESS.maxLevel=Math.max(PROGRESS.maxLevel|0,startLevel);
   PROGRESS.runs=(PROGRESS.runs|0)+1;saveProgress();
   if(startLevel!==levelIdx)buildLevel(startLevel);
+  applyTapeHints();          /* level 0's tapes predate the difficulty choice */
   if(diff.beaconAlways&&exitObj)document.getElementById('osdExit').style.display='block';
   initAudio();
   if(AC&&AC.resume)AC.resume();
@@ -4041,6 +4124,7 @@ function loop(now){
     updateTapes(dt,t);
     updateItems(dt,t);
     updateExit(dt);
+    updateTapeHint();
     updateMonument(dt,t);
     updateDirector(dt,t);
   }
