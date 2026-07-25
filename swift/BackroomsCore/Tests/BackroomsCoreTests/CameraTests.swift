@@ -31,7 +31,14 @@ final class CameraTests: XCTestCase {
 
     func testMatricesMatchTheWebRenderer() throws {
         let fix = try load()
-        let tol: Float = 1e-5
+        // Magnitude-aware tolerance. A view matrix's translation column holds
+        // world coordinates that reach into the hundreds of metres, and Float
+        // resolution there is already ~1.5e-5 — so a flat absolute epsilon
+        // would fail on arithmetic that is exactly right. Basis elements stay
+        // in [-1, 1] and are still held to 1e-5.
+        func tolerance(for expected: Float) -> Float {
+            max(1e-5, abs(expected) * 1e-5)
+        }
         for (i, entry) in fix.poses.enumerated() {
             let p = entry.pose
             let view = Mat4.view(positionX: p.px, y: p.py, z: p.pz,
@@ -39,8 +46,10 @@ final class CameraTests: XCTestCase {
             let proj = Mat4.perspectiveGL(fovDegrees: p.fov, aspect: p.aspect,
                                           near: fix.near, far: fix.far)
             for k in 0..<16 {
-                XCTAssertEqual(view.m[k], entry.view[k], accuracy: tol, "pose \(i) view[\(k)]")
-                XCTAssertEqual(proj.m[k], entry.proj[k], accuracy: tol, "pose \(i) proj[\(k)]")
+                XCTAssertEqual(view.m[k], entry.view[k],
+                               accuracy: tolerance(for: entry.view[k]), "pose \(i) view[\(k)]")
+                XCTAssertEqual(proj.m[k], entry.proj[k],
+                               accuracy: tolerance(for: entry.proj[k]), "pose \(i) proj[\(k)]")
             }
         }
     }
