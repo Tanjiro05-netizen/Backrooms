@@ -181,7 +181,7 @@ public final class GameSession {
         uniforms.apply(camera: camera)
         uniforms.loadNearestLights(
             from: map, playerX: player.x, playerZ: player.z,
-            lightY: Float(map.spec.wallHeight - environment.lightDrop),
+            lightY: Float(map.spec.wallHeight) - environment.lightDrop,
             color: environment.lightColor,
             intensity: environment.lightIntensity, range: environment.lightRange)
         let lamp: Float = input.lampOn ? 2.6 : 0
