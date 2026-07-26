@@ -14,9 +14,29 @@ is built alongside it; both live in the same repo and share fixtures.
 2. **Fixtures are the contract.** Every ported system gets fixtures dumped
    from the running JS game (`tools/` + Playwright) and an XCTest asserting
    exact equality. A port without a fixture test is a rewrite, not a port.
-3. **CI is the compiler.** `.github/workflows/ios.yml` builds the shell and
-   runs `swift test` on a macOS runner for every push touching `ios/`, `web/`
-   or `swift/` — development of this port can proceed from any machine.
+3. **CI is the compiler.** `.github/workflows/ios.yml` builds the shell, builds
+   the native app, and runs `swift test` on a macOS runner for every push
+   touching `ios/`, `web/` or `swift/` — development of this port can proceed
+   from any machine.
+
+## Running the native app
+
+```sh
+open ios/BackroomsNative/BackroomsNative.xcodeproj
+```
+
+Pick any iPhone simulator and hit run. The project references
+`swift/BackroomsCore` as a **local** Swift package (`XCLocalSwiftPackageReference`),
+so there is nothing to fetch and edits to the core are picked up on the next
+build. Controls: left thumb is a virtual stick — push it to the rim to sprint —
+right thumb drags to look, LAMP toggles the camcorder light.
+
+`Shaders.metal` ships as a package *resource* and is compiled at runtime rather
+than pre-built into a metallib. That is deliberate: it keeps `swift build`
+working on any machine, which is what lets CI verify the renderer without an
+app target. If you later want the ~100ms back at launch, add the `.metal` file
+to the app target's Compile Sources and `makeLibrary()` will find the
+precompiled default library first.
 
 ## Status
 
@@ -37,9 +57,13 @@ is built alongside it; both live in the same repo and share fixtures.
 | Tapes / items / exits / level flow | ⬜ | — | pure logic, easy fixtures |
 | Nerve/sanity + horror director | ⬜ | — | port schedules; keep event weights |
 | Camera / matrix math (`Mat4`, `Camera`) | ✅ BackroomsCore | ✅ view+proj vs Three.js, exact | YXZ euler + GL and Metal depth conventions |
-| **Renderer (Metal)** | 🟡 BackroomsRender | ✅ layout/mesh/light tests | forward pass, uniforms, mesh upload done; textures + app target next |
+| **Renderer (Metal)** | 🟡 BackroomsRender | ✅ layout/mesh/light tests | forward pass, uniforms, mesh upload, per-frame entity mesh; procedural textures still flat placeholders |
+| Game loop (`GameSession`) | ✅ BackroomsRender | ✅ hunt/death/restart/bounds | fixed 1/60 accumulator over map+player+hunter+camera |
+| **Native app target** | ✅ `ios/BackroomsNative` | ✅ builds in CI | `MTKView`, virtual stick + drag look, HUD, death/rewind |
 | Audio (AVAudioEngine) | ⬜ | — | procedural synth port of the WebAudio graph |
-| Input (touch/gyro) | ⬜ | — | reuse shell's Core Motion work |
+| Input (touch/gyro) | 🟡 touch done | — | gyro still to come; reuse shell's Core Motion work |
+| VHS post chain (MSL) | ⬜ | — | the identity of the look; GLSL→MSL line-for-line |
+| Procedural textures | ⬜ | — | `genWallpaper`/`genCarpet`/… → CPU pixel buffers |
 
 ## Renderer decision
 
@@ -67,11 +91,14 @@ dependency). The web renderer is deliberately simple to port:
 3. Player sim: movement, collision, stamina/battery/health/nerve ticks;
    fixture = deterministic input-script → state trace comparison.
 4. Entity AI + director as a fixed-timestep simulation module.
-5. Metal renderer bootstrap: level mesh + textures + lights + camera.
-6. VHS post chain in MSL; A/B screenshot comparison against the web build.
-7. AVAudioEngine synth: port `noiseBurst`-family + drone/heartbeat graph.
-8. New SwiftUI app target `BackroomsNative` alongside the shell; ship both
-   until parity, then switch the App Store target.
+5. ✅ Metal renderer bootstrap: level mesh + lights + camera + entity.
+6. ✅ App target `BackroomsNative` alongside the shell — it launches, generates
+   a floor, and is hunted. **This is where the port stands.**
+7. Procedural textures: port the canvas generators to CPU pixel buffers.
+8. VHS post chain in MSL; A/B screenshot comparison against the web build.
+9. AVAudioEngine synth: port `noiseBurst`-family + drone/heartbeat graph.
+10. Tapes/exits/level flow, entity idle+seen phases, theme props — then switch
+    the App Store target from the shell to native.
 
 ## Working agreement
 

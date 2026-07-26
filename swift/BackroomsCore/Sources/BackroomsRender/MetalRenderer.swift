@@ -1,6 +1,7 @@
 #if canImport(Metal)
 import Metal
 import Foundation
+import Dispatch
 import BackroomsCore
 
 /// The native forward renderer.
@@ -31,6 +32,18 @@ public final class MetalRenderer {
     private var samplerState: MTLSamplerState?
     /// Stand-in albedo until the procedural texture generators are ported.
     private var fallbackTexture: MTLTexture?
+    /// Near-black, so the entity reads as a silhouette rather than a beige man.
+    private var entityTexture: MTLTexture?
+
+    /// Ring of scratch buffers for geometry that changes every frame (the
+    /// entity). Three deep because `MTKView` keeps at most three frames in
+    /// flight, and the semaphore stops the CPU lapping the GPU and overwriting
+    /// a buffer still being read.
+    private var dynamicBuffers: [MTLBuffer] = []
+    private var dynamicIndex = 0
+    private let inFlight = DispatchSemaphore(value: 3)
+    private static let framesInFlight = 3
+    private static let dynamicCapacityFloats = 24_576   // 3072 vertices
 
     public init?(device: MTLDevice? = MTLCreateSystemDefaultDevice()) {
         guard let device, let queue = device.makeCommandQueue() else { return nil }
@@ -88,26 +101,42 @@ public final class MetalRenderer {
         sampDesc.maxAnisotropy = 8
         samplerState = device.makeSamplerState(descriptor: sampDesc)
 
-        fallbackTexture = makeFallbackTexture()
-    }
+        fallbackTexture = makeSolidTexture(r: 186, g: 174, b: 128)
+        entityTexture = makeSolidTexture(r: 26, g: 24, b: 24)
 
-    private func makeLibrary() throws -> MTLLibrary {
-        guard let url = Bundle.module.url(forResource: "Shaders", withExtension: "metal") else {
-            throw RendererError.missingShaderSource
+        dynamicBuffers = (0..<MetalRenderer.framesInFlight).compactMap { _ in
+            device.makeBuffer(length: MetalRenderer.dynamicCapacityFloats * MemoryLayout<Float>.size,
+                              options: .storageModeShared)
         }
-        let source = try String(contentsOf: url, encoding: .utf8)
-        return try device.makeLibrary(source: source, options: nil)
     }
 
-    /// A flat mid-grey until `genWallpaper`/`genCarpet` and friends are ported;
-    /// lighting and fog still read correctly against it.
-    private func makeFallbackTexture() -> MTLTexture? {
+    /// Prefers the precompiled default library — which is what exists when the
+    /// `.metal` file is a source in an app target — and falls back to compiling
+    /// the shipped `.metal` resource at runtime, which is how the package
+    /// builds standalone (and how CI verifies this target without an app).
+    private func makeLibrary() throws -> MTLLibrary {
+        if let precompiled = device.makeDefaultLibrary(),
+           precompiled.makeFunction(name: "level_vertex") != nil {
+            return precompiled
+        }
+        for bundle in [Bundle.module, Bundle.main] {
+            if let url = bundle.url(forResource: "Shaders", withExtension: "metal"),
+               let source = try? String(contentsOf: url, encoding: .utf8) {
+                return try device.makeLibrary(source: source, options: nil)
+            }
+        }
+        throw RendererError.missingShaderSource
+    }
+
+    /// A flat colour stand-in until `genWallpaper`/`genCarpet` and friends are
+    /// ported; lighting and fog still read correctly against it.
+    private func makeSolidTexture(r: UInt8, g: UInt8, b: UInt8) -> MTLTexture? {
         let desc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba8Unorm, width: 4, height: 4, mipmapped: false)
         desc.usage = .shaderRead
         guard let tex = device.makeTexture(descriptor: desc) else { return nil }
         var pixels = [UInt8]()
-        for _ in 0..<16 { pixels.append(contentsOf: [186, 174, 128, 255]) }
+        for _ in 0..<16 { pixels.append(contentsOf: [r, g, b, 255]) }
         tex.replace(region: MTLRegionMake2D(0, 0, 4, 4), mipmapLevel: 0,
                     withBytes: pixels, bytesPerRow: 4 * 4)
         return tex
@@ -142,13 +171,22 @@ public final class MetalRenderer {
 
     /// Encodes one frame. The caller supplies the render pass (from an
     /// `MTKView`'s current descriptor, say) and the drawable to present.
+    /// `entity`, when present, is world-space geometry rebuilt this frame.
     public func draw(scene: LevelScene, uniforms: SceneUniforms,
+                     entity: InterleavedMesh? = nil,
                      passDescriptor: MTLRenderPassDescriptor,
                      drawable: MTLDrawable?) {
-        guard let pipelineState,
-              let commandBuffer = commandQueue.makeCommandBuffer(),
-              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor)
-        else { return }
+        guard let pipelineState else { return }
+        inFlight.wait()
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else {
+            inFlight.signal()
+            return
+        }
+        commandBuffer.addCompletedHandler { [sem = inFlight] _ in sem.signal() }
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) else {
+            commandBuffer.commit()
+            return
+        }
 
         encoder.setRenderPipelineState(pipelineState)
         if let depthState { encoder.setDepthStencilState(depthState) }
@@ -169,6 +207,23 @@ public final class MetalRenderer {
             guard let plane else { continue }
             encoder.setVertexBuffer(plane.buffer, offset: 0, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: plane.vertexCount)
+        }
+
+        // The entity last, on its own dark albedo, and double-sided: its limbs
+        // are thin enough that a back-face cull leaves visible holes when the
+        // camera is close.
+        if let entity, !entity.isEmpty, !dynamicBuffers.isEmpty,
+           entity.vertices.count <= MetalRenderer.dynamicCapacityFloats,
+           let entityTexture {
+            let buffer = dynamicBuffers[dynamicIndex]
+            dynamicIndex = (dynamicIndex + 1) % dynamicBuffers.count
+            entity.vertices.withUnsafeBytes { src in
+                buffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
+            encoder.setCullMode(.none)
+            encoder.setFragmentTexture(entityTexture, index: 0)
+            encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: entity.vertexCount)
         }
 
         encoder.endEncoding()
