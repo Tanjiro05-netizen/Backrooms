@@ -12,12 +12,22 @@ import BackroomsCore
 /// replaceable without touching gameplay.
 public final class MetalRenderer {
 
+    /// A material's three GPU maps.
+    public struct Material {
+        public var albedo: MTLTexture
+        public var normal: MTLTexture
+        public var roughness: MTLTexture
+    }
+
     /// GPU-side level: one vertex buffer per geometry chunk, plus the floor
-    /// and ceiling planes.
+    /// and ceiling planes, and the three materials they are drawn with.
     public struct LevelScene {
         public var chunkBuffers: [(buffer: MTLBuffer, vertexCount: Int)] = []
         public var floor: (buffer: MTLBuffer, vertexCount: Int)?
         public var ceiling: (buffer: MTLBuffer, vertexCount: Int)?
+        public var wallMaterial: Material?
+        public var floorMaterial: Material?
+        public var ceilingMaterial: Material?
 
         public var totalVertices: Int {
             chunkBuffers.reduce(0) { $0 + $1.vertexCount }
@@ -30,10 +40,19 @@ public final class MetalRenderer {
     private var pipelineState: MTLRenderPipelineState?
     private var depthState: MTLDepthStencilState?
     private var samplerState: MTLSamplerState?
-    /// Stand-in albedo until the procedural texture generators are ported.
+    /// Albedo for a scene built without materials (an older `LevelScene`, or a
+    /// device where texture allocation failed).
     private var fallbackTexture: MTLTexture?
     /// Near-black, so the entity reads as a silhouette rather than a beige man.
     private var entityTexture: MTLTexture?
+    /// Neutral stand-ins for anything drawn without a full material.
+    private var flatNormalTexture: MTLTexture?
+    private var flatRoughTexture: MTLTexture?
+
+    /// Synthesised materials, kept per theme. Generation costs a second or so
+    /// of CPU, and a death-and-rewind rebuilds the level — without this cache
+    /// every retry would pay for the same wallpaper again.
+    private var materialCache: [LevelSpec.Theme: (wall: Material, floor: Material, ceiling: Material)] = [:]
 
     /// Ring of scratch buffers for geometry that changes every frame (the
     /// entity). Three deep because `MTKView` keeps at most three frames in
@@ -103,6 +122,9 @@ public final class MetalRenderer {
 
         fallbackTexture = makeSolidTexture(r: 186, g: 174, b: 128)
         entityTexture = makeSolidTexture(r: 26, g: 24, b: 24)
+        // (0,0,1) in tangent space encodes to (128,128,255).
+        flatNormalTexture = makeSolidTexture(r: 128, g: 128, b: 255)
+        flatRoughTexture = makeSolidTexture(r: 235, g: 235, b: 235)
 
         dynamicBuffers = (0..<MetalRenderer.framesInFlight).compactMap { _ in
             device.makeBuffer(length: MetalRenderer.dynamicCapacityFloats * MemoryLayout<Float>.size,
@@ -145,18 +167,100 @@ public final class MetalRenderer {
     // MARK: - Level upload
 
     /// Uploads a generated level to the GPU once; nothing here changes per frame.
+    ///
+    /// Texture synthesis runs on the CPU here and takes a few hundred
+    /// milliseconds — it belongs behind a loading screen, not on a frame.
     public func makeScene(map: GameMap, geometry: LevelGeometry) -> LevelScene {
         var scene = LevelScene()
         for mesh in InterleavedMesh.chunks(of: geometry) {
             if let entry = upload(mesh) { scene.chunkBuffers.append(entry) }
         }
         let spec = map.spec
-        let floorRepeat = Float(Double(map.grid) * spec.cellSize / 2.4)
+        let span = Double(map.grid) * spec.cellSize
+        let tiles = ProceduralTextures.tileScales(spec.theme)
+
+        // Each plane repeats at its own real-world scale, so carpet pile and
+        // ceiling tiles stay the size they are in the web build.
         scene.floor = upload(InterleavedMesh.groundPlane(
-            map: map, y: 0, flipNormal: false, uvRepeat: floorRepeat))
+            map: map, y: 0, flipNormal: false, uvRepeat: Float(span / tiles.floor)))
         scene.ceiling = upload(InterleavedMesh.groundPlane(
-            map: map, y: Float(spec.wallHeight), flipNormal: true, uvRepeat: floorRepeat))
+            map: map, y: Float(spec.wallHeight), flipNormal: true,
+            uvRepeat: Float(span / tiles.ceiling)))
+
+        if let cached = materialCache[spec.theme] {
+            scene.wallMaterial = cached.wall
+            scene.floorMaterial = cached.floor
+            scene.ceilingMaterial = cached.ceiling
+            return scene
+        }
+
+        let theme = ProceduralTextures.forTheme(spec.theme)
+        scene.wallMaterial = makeMaterial(theme.wall)
+        // The pool floor is the wall tile, tinted colder on the CPU rather than
+        // via a uniform — it keeps the fixture-pinned uniform layout untouched.
+        scene.floorMaterial = theme.floorIsTinted
+            ? makeMaterial(theme.floor, tintR: theme.floorTintR,
+                           tintG: theme.floorTintG, tintB: theme.floorTintB)
+            : makeMaterial(theme.floor)
+        scene.ceilingMaterial = makeMaterial(theme.ceiling)
+        if let w = scene.wallMaterial, let f = scene.floorMaterial, let c = scene.ceilingMaterial {
+            materialCache[spec.theme] = (w, f, c)
+        }
         return scene
+    }
+
+    private func makeMaterial(_ set: SurfaceTextures, tintR: Double = 1,
+                              tintG: Double = 1, tintB: Double = 1) -> Material? {
+        var albedoBytes = set.albedo
+        if tintR != 1 || tintG != 1 || tintB != 1 {
+            for i in stride(from: 0, to: albedoBytes.count, by: 4) {
+                albedoBytes[i] = UInt8(min(255, Double(albedoBytes[i]) * tintR))
+                albedoBytes[i + 1] = UInt8(min(255, Double(albedoBytes[i + 1]) * tintG))
+                albedoBytes[i + 2] = UInt8(min(255, Double(albedoBytes[i + 2]) * tintB))
+            }
+        }
+        guard let albedo = makeTexture(albedoBytes, size: set.size,
+                                       format: .rgba8Unorm_srgb, bytesPerPixel: 4),
+              let normal = makeTexture(set.normal, size: set.size,
+                                       format: .rgba8Unorm, bytesPerPixel: 4),
+              let rough = makeTexture(set.roughness, size: set.size,
+                                      format: .r8Unorm, bytesPerPixel: 1)
+        else { return nil }
+        return Material(albedo: albedo, normal: normal, roughness: rough)
+    }
+
+    /// Uploads level 0 and generates the mip chain on the GPU. Mips are not
+    /// optional here: these sheets repeat dozens of times across a floor, so
+    /// without them the far end of a corridor aliases into noise.
+    private func makeTexture(_ bytes: [UInt8], size: Int,
+                             format: MTLPixelFormat, bytesPerPixel: Int) -> MTLTexture? {
+        let desc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: format, width: size, height: size, mipmapped: true)
+        desc.usage = [.shaderRead]
+        desc.storageMode = .private
+        guard let texture = device.makeTexture(descriptor: desc) else { return nil }
+
+        // .private storage needs a staging blit, which is also where the mips
+        // get built.
+        let stagingDesc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: format, width: size, height: size, mipmapped: false)
+        stagingDesc.usage = [.shaderRead]
+        guard let staging = device.makeTexture(descriptor: stagingDesc) else { return nil }
+        staging.replace(region: MTLRegionMake2D(0, 0, size, size), mipmapLevel: 0,
+                        withBytes: bytes, bytesPerRow: size * bytesPerPixel)
+
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let blit = commandBuffer.makeBlitCommandEncoder() else { return nil }
+        blit.copy(from: staging, sourceSlice: 0, sourceLevel: 0,
+                  sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                  sourceSize: MTLSize(width: size, height: size, depth: 1),
+                  to: texture, destinationSlice: 0, destinationLevel: 0,
+                  destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
+        blit.generateMipmaps(for: texture)
+        blit.endEncoding()
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+        return texture
     }
 
     private func upload(_ mesh: InterleavedMesh) -> (MTLBuffer, Int)? {
@@ -197,14 +301,30 @@ public final class MetalRenderer {
         encoder.setVertexBytes(&packed, length: packed.count * MemoryLayout<Float>.size, index: 1)
         encoder.setFragmentBytes(&packed, length: packed.count * MemoryLayout<Float>.size, index: 1)
         if let samplerState { encoder.setFragmentSamplerState(samplerState, index: 0) }
-        if let fallbackTexture { encoder.setFragmentTexture(fallbackTexture, index: 0) }
 
+        /// Binds a material, or the flat stand-ins if the level was built
+        /// before textures existed.
+        func bind(_ material: Material?) {
+            if let material {
+                encoder.setFragmentTexture(material.albedo, index: 0)
+                encoder.setFragmentTexture(material.normal, index: 1)
+                encoder.setFragmentTexture(material.roughness, index: 2)
+            } else {
+                encoder.setFragmentTexture(fallbackTexture, index: 0)
+                encoder.setFragmentTexture(flatNormalTexture, index: 1)
+                encoder.setFragmentTexture(flatRoughTexture, index: 2)
+            }
+        }
+
+        bind(scene.wallMaterial)
         for (buffer, count) in scene.chunkBuffers {
             encoder.setVertexBuffer(buffer, offset: 0, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: count)
         }
-        for plane in [scene.floor, scene.ceiling] {
+        for (plane, material) in [(scene.floor, scene.floorMaterial),
+                                  (scene.ceiling, scene.ceilingMaterial)] {
             guard let plane else { continue }
+            bind(material)
             encoder.setVertexBuffer(plane.buffer, offset: 0, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: plane.vertexCount)
         }
@@ -222,6 +342,10 @@ public final class MetalRenderer {
             }
             encoder.setCullMode(.none)
             encoder.setFragmentTexture(entityTexture, index: 0)
+            // Its boxes are rotated, so the level's axis-aligned tangent frame
+            // does not apply — give it a flat normal and a matte roughness.
+            encoder.setFragmentTexture(flatNormalTexture, index: 1)
+            encoder.setFragmentTexture(flatRoughTexture, index: 2)
             encoder.setVertexBuffer(buffer, offset: 0, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: entity.vertexCount)
         }

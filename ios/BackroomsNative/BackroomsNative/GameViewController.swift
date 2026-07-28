@@ -29,6 +29,7 @@ final class GameViewController: UIViewController, MTKViewDelegate {
     private var stickView: UIView!
     private var knobView: UIView!
     private var deathView: UIView!
+    private var loadingView: UIView!
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -58,8 +59,28 @@ final class GameViewController: UIViewController, MTKViewDelegate {
             return
         }
 
-        session = GameSession(levelIndex: 0, renderer: renderer)
         buildOverlay()
+        loadLevel(0)
+    }
+
+    /// Generating a floor means synthesising ~2M pixels of wallpaper, carpet
+    /// and ceiling on the CPU, so it happens off the main thread behind a card
+    /// rather than freezing the first second of the app.
+    private func loadLevel(_ index: Int) {
+        loadingView.isHidden = false
+        hud.isHidden = true
+        let renderer = self.renderer!
+        DispatchQueue.global(qos: .userInitiated).async {
+            let session = GameSession(levelIndex: index, renderer: renderer)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.session = session
+                self.input = GameSession.Input()
+                self.lastFrame = CACurrentMediaTime()
+                self.loadingView.isHidden = true
+                self.hud.isHidden = false
+            }
+        }
     }
 
     private func showFailure(_ message: String) {
@@ -121,6 +142,26 @@ final class GameViewController: UIViewController, MTKViewDelegate {
         ])
 
         buildDeathOverlay()
+        buildLoadingOverlay()
+    }
+
+    private func buildLoadingOverlay() {
+        loadingView = UIView(frame: view.bounds)
+        loadingView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        loadingView.backgroundColor = .black
+        loadingView.isHidden = true
+        view.addSubview(loadingView)
+
+        let label = UILabel()
+        label.text = "◉ GENERATING FLOOR"
+        label.textColor = UIColor(white: 0.72, alpha: 1)
+        label.font = .monospacedSystemFont(ofSize: 15, weight: .bold)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        loadingView.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: loadingView.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: loadingView.centerYAnchor)
+        ])
     }
 
     /// Shown when vitals hit zero. It covers the stick and the lamp so only

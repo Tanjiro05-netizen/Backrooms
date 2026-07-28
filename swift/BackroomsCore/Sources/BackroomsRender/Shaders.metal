@@ -67,12 +67,52 @@ static inline float contactAO(float worldY, float wallHeight) {
     return clamp(ao, 0.35, 1.0);
 }
 
+/* Tangent frame, derived rather than stored.
+
+   Every level surface is axis-aligned and its UVs come straight from world
+   coordinates (see `LevelGeometry.faceX/faceZ` and `InterleavedMesh.groundPlane`):
+   walls take u from the horizontal axis and v from world Y, floors and ceilings
+   take u,v from x,z. So dP/du and dP/dv are known exactly from the face normal,
+   and shipping per-vertex tangents would just be storing a constant. */
+static inline float3x3 tangentFrame(float3 N) {
+    float3 T, B;
+    if (abs(N.y) > 0.5) {          // floor or ceiling: u = x, v = z
+        T = float3(1, 0, 0);
+        B = float3(0, 0, 1);
+    } else if (abs(N.z) > 0.5) {   // wall facing ±Z: u = x, v = y
+        T = float3(1, 0, 0);
+        B = float3(0, 1, 0);
+    } else {                       // wall facing ±X: u = z, v = y
+        T = float3(0, 0, 1);
+        B = float3(0, 1, 0);
+    }
+    return float3x3(T, B, N);
+}
+
 fragment float4 level_fragment(VertexOut in [[stage_in]],
                                constant SceneUniforms &u [[buffer(1)]],
                                texture2d<float> albedo [[texture(0)]],
+                               texture2d<float> normalTex [[texture(1)]],
+                               texture2d<float> roughTex [[texture(2)]],
                                sampler samp [[sampler(0)]]) {
     float3 base = albedo.sample(samp, in.uv).rgb;
     float3 N = normalize(in.normal);
+
+    // Perturb by the tangent-space normal map. The same buffer the web build
+    // feeds MeshStandardMaterial, read with the same dP/du, dP/dv convention.
+    float3 tn = normalTex.sample(samp, in.uv).xyz * 2.0 - 1.0;
+    N = normalize(tangentFrame(N) * tn);
+
+    // 0 = mirror, 1 = fully rough. Drives both the spec lobe and its strength,
+    // so wet concrete and pool tile pick up highlights the carpet never does.
+    float roughness = clamp(roughTex.sample(samp, in.uv).r, 0.04, 1.0);
+    // Phong exponent from roughness, bounded: below ~4 the "highlight" is just
+    // a wash over the whole surface, and above ~400 it is a subpixel glint that
+    // only ever shows up as shimmer.
+    float shininess = clamp(2.0 / (roughness * roughness * roughness * roughness), 4.0, 400.0);
+    float specStrength = (1.0 - roughness) * (1.0 - roughness) * 0.6;
+    float3 V = normalize(u.cameraPos.xyz - in.worldPos);
+    float3 specular = float3(0.0);
 
     // Hemisphere ambient: sky above, bounce below. The flat fluorescent wash
     // of the Backrooms is mostly ambient, so this carries a lot of the look.
@@ -89,8 +129,15 @@ fragment float4 level_fragment(VertexOut in [[stage_in]],
         float3 L = toL / max(dist, 1e-4);
         float atten = clamp(1.0 - dist / range, 0.0, 1.0);
         atten *= atten;                                   // quadratic-ish falloff
+        float ndl = max(dot(N, L), 0.0);
         light += u.pointLights[i].colorIntensity.rgb
-               * (u.pointLights[i].colorIntensity.w * max(dot(N, L), 0.0) * atten);
+               * (u.pointLights[i].colorIntensity.w * ndl * atten);
+        if (specStrength > 0.001 && ndl > 0.0) {
+            float3 H = normalize(L + V);
+            specular += u.pointLights[i].colorIntensity.rgb
+                      * (u.pointLights[i].colorIntensity.w * atten * specStrength
+                         * pow(max(dot(N, H), 0.0), shininess));
+        }
     }
 
     // The camcorder lamp — a spot cone from the operator's eye.
@@ -102,10 +149,17 @@ fragment float4 level_fragment(VertexOut in [[stage_in]],
         float cone = smoothstep(u.flashParams.y, u.flashParams.x, spot);
         float atten = clamp(1.0 - dist / u.flashParams.z, 0.0, 1.0);
         atten *= atten;
-        light += u.flash.rgb * (u.flash.w * max(dot(N, L), 0.0) * cone * atten);
+        float ndl = max(dot(N, L), 0.0);
+        light += u.flash.rgb * (u.flash.w * ndl * cone * atten);
+        if (specStrength > 0.001 && ndl > 0.0) {
+            float3 H = normalize(L + V);
+            specular += u.flash.rgb * (u.flash.w * cone * atten * specStrength
+                                       * pow(max(dot(N, H), 0.0), shininess));
+        }
     }
 
-    float3 color = base * light * contactAO(in.worldPos.y, u.fogColor.w);
+    float ao = contactAO(in.worldPos.y, u.fogColor.w);
+    float3 color = (base * light + specular) * ao;
 
     // FogExp2, matching the web scene's falloff.
     float d = length(u.cameraPos.xyz - in.worldPos);
