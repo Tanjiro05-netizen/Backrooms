@@ -159,7 +159,7 @@ public final class GameSession {
     }
 
     private func uploadProps(_ renderer: MetalRenderer) {
-        guard var scene else { return }
+        guard var scene = self.scene else { return }
         let currentMap = map
         let ground: (Double, Double) -> Double = { x, z in
             currentMap.groundHeight(atX: x, z: z)

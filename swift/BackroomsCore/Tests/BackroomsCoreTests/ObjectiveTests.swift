@@ -28,8 +28,10 @@ final class ObjectiveTests: XCTestCase {
             let half = Double(m.grid) * m.spec.cellSize / 2
             for tape in tapes {
                 let cx = m.worldToCellX(tape.x), cz = m.worldToCellZ(tape.z)
-                XCTAssertTrue((0..<m.grid).contains(cx) && (0..<m.grid).contains(cz),
-                              "level \(level) tape \(tape.index) is outside the grid")
+                guard (0..<m.grid).contains(cx), (0..<m.grid).contains(cz) else {
+                    XCTFail("level \(level) tape \(tape.index) is outside the grid")
+                    continue
+                }
                 XCTAssertLessThan(abs(tape.x), half)
                 XCTAssertLessThan(abs(tape.z), half)
                 let d = dist[cx + cz * m.grid]

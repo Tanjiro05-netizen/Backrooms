@@ -54,12 +54,12 @@ precompiled default library first.
 | Entity defs (4 creatures) | ✅ BackroomsCore | ✅ | speed/catchR/huntTime/burst/waterSpeed |
 | Theme props (crates/pipes/pool platforms, fixture geo) | ⬜ | — | needs cylinder/sphere/torus emitters (`appendGeom` equivalents) |
 | Entity idle/seen phases (sighting, flee, gaze-vanish, stalker reposition) | ⬜ next | — | mixes seeded + Math.random; scenario fixtures with seeded random |
-| Tapes / items / exits / level flow | ⬜ | — | pure logic, easy fixtures |
+| Tapes / exits / level flow | ✅ BackroomsCore | ✅ placement + interaction + full run | 2 tapes/floor, door relocation, descent, escape; items still to come |
 | Nerve/sanity + horror director | ⬜ | — | port schedules; keep event weights |
 | Camera / matrix math (`Mat4`, `Camera`) | ✅ BackroomsCore | ✅ view+proj vs Three.js, exact | YXZ euler + GL and Metal depth conventions |
 | **Renderer (Metal)** | 🟡 BackroomsRender | ✅ layout/mesh/light tests | forward pass, uniforms, mesh upload, per-frame entity mesh, albedo/normal/roughness materials with mips |
 | Game loop (`GameSession`) | ✅ BackroomsRender | ✅ hunt/death/restart/bounds | fixed 1/60 accumulator over map+player+hunter+camera |
-| **Native app target** | ✅ `ios/BackroomsNative` | ✅ builds in CI | `MTKView`, virtual stick + drag look, HUD, death/rewind |
+| **Native app target** | ✅ `ios/BackroomsNative` | ✅ builds in CI | `MTKView`, virtual stick + drag look, HUD, USE prompt, floor cards, death/rewind, win screen |
 | Audio (AVAudioEngine) | ⬜ | — | procedural synth port of the WebAudio graph |
 | Input (touch/gyro) | 🟡 touch done | — | gyro still to come; reuse shell's Core Motion work |
 | VHS post chain (MSL) | ⬜ | — | the identity of the look; GLSL→MSL line-for-line |
@@ -97,9 +97,11 @@ dependency). The web renderer is deliberately simple to port:
 7. ✅ Procedural textures: the canvas generators as CPU pixel buffers, plus
    normal and roughness maps and a tangent frame derived from the UV layout.
 8. VHS post chain in MSL; A/B screenshot comparison against the web build.
-9. AVAudioEngine synth: port `noiseBurst`-family + drone/heartbeat graph.
-10. Tapes/exits/level flow, entity idle+seen phases, theme props — then switch
-    the App Store target from the shell to native.
+9. ✅ Tapes, exits and the four-floor run — the native build is playable
+   start to finish.
+10. AVAudioEngine synth: port `noiseBurst`-family + drone/heartbeat graph.
+11. Entity idle+seen phases, items, theme props — then switch the App Store
+    target from the shell to native.
 
 ## Working agreement
 
