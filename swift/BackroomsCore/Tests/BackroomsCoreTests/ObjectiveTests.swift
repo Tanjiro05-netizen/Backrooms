@@ -10,7 +10,7 @@ final class ObjectiveTests: XCTestCase {
     }
 
     private func rng(_ level: Int) -> Mulberry32 {
-        Mulberry32(seed: LevelSpec.seed(forLevel: level) &+ 991)
+        Mulberry32(seed: LevelSpec.seed(forLevel: level) &+ 5387)
     }
 
     // MARK: - Tapes

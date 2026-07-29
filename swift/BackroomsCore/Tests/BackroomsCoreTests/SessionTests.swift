@@ -41,17 +41,32 @@ final class SessionTests: XCTestCase {
         XCTAssertLessThan(later, first, "the hunter must actually close on a stationary player")
     }
 
-    /// It spawns out of sight, not on top of you: the web build picks a cell
-    /// 4–7 rooms away by BFS, so on level 0 (6m cells) that is roughly 24–42m.
+    /// It spawns out of sight, not on top of you: 4–7 rooms away *along the
+    /// floor plan*.
+    ///
+    /// The invariant is the BFS distance, not the straight-line one — a path
+    /// that wraps around a wall block covers 5 rooms while ending up two rooms
+    /// away as the crow flies. Asserting metres here looks equivalent and is
+    /// not; it passed only by luck of the RNG stream, and broke the moment
+    /// anything upstream drew from it.
     func testHunterSpawnsAtAFairDistance() throws {
         for level in 0..<LevelSpec.standardLevels.count {
             let session = GameSession(levelIndex: level)
             advance(session, seconds: EntityDef.byLevel[level].huntTime * 0.8 + 0.5)
-            let d = try XCTUnwrap(session.hunterDistance,
-                                  "level \(level) never spawned a hunter")
-            let cell = LevelSpec.standardLevels[level].cellSize
-            XCTAssertGreaterThan(d, cell * 3, "level \(level) spawned the hunter on top of the player")
-            XCTAssertLessThan(d, cell * 9, "level \(level) spawned the hunter unreachably far")
+            let hunter = try XCTUnwrap(session.hunter, "level \(level) never spawned a hunter")
+
+            let map = session.map
+            let field = map.distanceField(fromX: map.worldToCellX(session.player.x),
+                                          z: map.worldToCellZ(session.player.z))
+            let cx = map.worldToCellX(hunter.x), cz = map.worldToCellZ(hunter.z)
+            let rooms = field[cx + cz * map.grid]
+            XCTAssertGreaterThanOrEqual(rooms, 4, "level \(level) spawned the hunter too close")
+            XCTAssertLessThanOrEqual(rooms, 7, "level \(level) spawned the hunter too far")
+
+            // And it must never be literally in the room with you.
+            let d = try XCTUnwrap(session.hunterDistance)
+            XCTAssertGreaterThan(d, LevelSpec.standardLevels[level].cellSize,
+                                 "level \(level) spawned the hunter in the player's room")
         }
     }
 

@@ -131,7 +131,13 @@ public final class GameSession {
     private var attackTimer: Double = 0
     /// Distance the hunter has travelled, driving its walk cycle.
     private var hunterStride: Double = 0
+    /// Hunt scheduling and spawn selection.
     private var rng: Mulberry32
+    /// Tape and door placement, on its own stream on purpose: sharing one
+    /// meant adding a single draw during placement shifted every hunt spawn
+    /// downstream of it, which is exactly the coupling that makes a change in
+    /// one system silently move another.
+    private var objectiveRng: Mulberry32
 
     public init(levelIndex: Int = 0, renderer: MetalRenderer? = nil) {
         let idx = max(0, min(LevelSpec.standardLevels.count - 1, levelIndex))
@@ -142,6 +148,7 @@ public final class GameSession {
         self.player = PlayerSim(map: self.map, colliders: self.geometry.colliderBuckets)
         self.environment = Environment.forTheme(spec.theme)
         self.rng = Mulberry32(seed: LevelSpec.seed(forLevel: idx) &+ 991)
+        self.objectiveRng = Mulberry32(seed: LevelSpec.seed(forLevel: idx) &+ 5387)
         self.nextHunt = EntityDef.byLevel[idx].huntTime * 0.8
         applyEnvironment()
         placeObjectives()
@@ -153,7 +160,8 @@ public final class GameSession {
 
     /// Scatter this floor's tapes and drop the door at the far end.
     private func placeObjectives() {
-        tapes = Objectives.placeTapes(map: map, count: GameSession.tapesPerFloor, rng: &rng)
+        tapes = Objectives.placeTapes(map: map, count: GameSession.tapesPerFloor,
+                                      rng: &objectiveRng)
         exit = Objectives.placeExitFar(map: map)
         tapesThisFloor = 0
     }
@@ -180,6 +188,7 @@ public final class GameSession {
         player = PlayerSim(map: map, colliders: geometry.colliderBuckets)
         environment = Environment.forTheme(spec.theme)
         rng = Mulberry32(seed: LevelSpec.seed(forLevel: clamped) &+ 991)
+        objectiveRng = Mulberry32(seed: LevelSpec.seed(forLevel: clamped) &+ 5387)
         hunter = nil
         nextHunt = EntityDef.byLevel[clamped].huntTime * 0.8
         pitch = 0
@@ -372,7 +381,7 @@ public final class GameSession {
     private func relocateExit() {
         guard var e = exit else { return }
         if let spot = Objectives.relocatedExit(map: map, playerX: player.x,
-                                               playerZ: player.z, rng: &rng) {
+                                               playerZ: player.z, rng: &objectiveRng) {
             e.x = spot.x
             e.z = spot.z
         }
