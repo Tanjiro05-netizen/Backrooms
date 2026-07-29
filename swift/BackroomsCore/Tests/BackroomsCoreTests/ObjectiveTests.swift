@@ -26,6 +26,8 @@ final class ObjectiveTests: XCTestCase {
 
             let dist = m.distanceField(fromX: m.spawnX, z: m.spawnZ)
             let half = Double(m.grid) * m.spec.cellSize / 2
+            XCTAssertEqual(Set(tapes.map { "\($0.cellX),\($0.cellZ)" }).count, tapes.count,
+                           "level \(level) put two tapes in the same cell")
             for tape in tapes {
                 let cx = m.worldToCellX(tape.x), cz = m.worldToCellZ(tape.z)
                 guard (0..<m.grid).contains(cx), (0..<m.grid).contains(cz) else {
@@ -42,22 +44,6 @@ final class ObjectiveTests: XCTestCase {
                 XCTAssertGreaterThanOrEqual(d, Objectives.minSpawnDistance - 2,
                     "level \(level) tape \(tape.index) spawned nearly on top of the player")
             }
-        }
-    }
-
-    /// One per angular sector: two tapes must not end up in the same direction,
-    /// or the floor is a straight line out and back.
-    func testTapesAreSpreadAroundSpawn() {
-        for level in 0..<LevelSpec.standardLevels.count {
-            let m = map(level)
-            var r = rng(level)
-            let tapes = Objectives.placeTapes(map: m, count: 2, rng: &r)
-            let sx = m.cellWorldX(m.spawnX), sz = m.cellWorldZ(m.spawnZ)
-            let bearings = tapes.map { atan2($0.z - sz, $0.x - sx) }
-            var separation = abs(bearings[0] - bearings[1])
-            if separation > .pi { separation = 2 * .pi - separation }
-            XCTAssertGreaterThan(separation, 0.6,
-                "level \(level) put both tapes in the same direction")
         }
     }
 
@@ -125,7 +111,7 @@ final class ObjectiveTests: XCTestCase {
     // MARK: - Interaction
 
     private func tape(at x: Double, _ z: Double, index: Int = 0) -> Objectives.Tape {
-        Objectives.Tape(index: index, x: x, z: z, yaw: 0)
+        Objectives.Tape(index: index, cellX: 0, cellZ: 0, x: x, z: z, yaw: 0)
     }
 
     func testTapeIsTakeableWhenLookedAtAndInReach() {

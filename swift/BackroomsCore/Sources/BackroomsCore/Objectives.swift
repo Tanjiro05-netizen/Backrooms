@@ -36,10 +36,27 @@ public enum Objectives {
 
     public struct Tape: Sendable, Equatable {
         public let index: Int          // 0-based, within the floor
+        /// The cell it was placed in, before the sub-cell jitter. Kept because
+        /// the sector guarantee is a statement about *cells* — jitter can carry
+        /// a tape's bearing across a sector boundary, so the world position
+        /// alone cannot tell you which sector it came from.
+        public let cellX: Int
+        public let cellZ: Int
         public let x: Double
         public let z: Double
         public let yaw: Double
         public var found = false
+
+        public init(index: Int, cellX: Int, cellZ: Int,
+                    x: Double, z: Double, yaw: Double, found: Bool = false) {
+            self.index = index
+            self.cellX = cellX
+            self.cellZ = cellZ
+            self.x = x
+            self.z = z
+            self.yaw = yaw
+            self.found = found
+        }
     }
 
     public struct Exit: Sendable, Equatable {
@@ -68,8 +85,13 @@ public enum Objectives {
 
     // MARK: - Placement
 
-    /// Scatters `count` tapes around the floor, one per angular sector so they
-    /// cannot all end up behind you, each at least `minSpawnDistance` cells out.
+    /// Scatters `count` tapes around the floor, one per angular sector, each at
+    /// least `minSpawnDistance` cells out.
+    ///
+    /// Sectors keep them from bunching, but they are not a minimum separation:
+    /// with two sectors the boundary is at bearing 0, so a pair can land a few
+    /// degrees either side of it. The web build behaves the same way; widening
+    /// the guarantee would be a design change, not a port.
     public static func placeTapes(map: GameMap, count: Int, rng: inout Mulberry32) -> [Tape] {
         guard count > 0 else { return [] }
         let grid = map.grid
@@ -91,10 +113,15 @@ public enum Objectives {
         }
 
         var tapes: [Tape] = []
+        var taken = Set<Int>()
         for i in 0..<count {
             // An empty sector borrows from its neighbour rather than dropping
-            // a tape — a floor must always carry its full count.
-            var pool = buckets[i].isEmpty ? buckets[(i + 1) % count] : buckets[i]
+            // a tape — a floor must always carry its full count. Cells already
+            // used are excluded, so borrowing can never stack two tapes on one
+            // cell; without that, two tapes could occupy the same spot and one
+            // would be unreachable behind the other.
+            var pool = (buckets[i].isEmpty ? buckets[(i + 1) % count] : buckets[i])
+                .filter { !taken.contains($0.x + $0.z * grid) }
             if pool.isEmpty {
                 pool = [(min(grid - 2, map.spawnX + 4 + i), map.spawnZ, 8)]
             }
@@ -103,10 +130,11 @@ public enum Objectives {
             // be a trip, not so far it is the opposite corner every time.
             let t = 0.35 + rng.nextUnit() * 0.5
             let pick = pool[min(pool.count - 1, Int(Double(pool.count) * t))]
+            taken.insert(pick.x + pick.z * grid)
             let x = map.cellWorldX(pick.x) + (rng.nextUnit() - 0.5) * jitter
             let z = map.cellWorldZ(pick.z) + (rng.nextUnit() - 0.5) * jitter
             let yaw = rng.nextUnit() * 6.28
-            tapes.append(Tape(index: i, x: x, z: z, yaw: yaw))
+            tapes.append(Tape(index: i, cellX: pick.x, cellZ: pick.z, x: x, z: z, yaw: yaw))
         }
         return tapes
     }
