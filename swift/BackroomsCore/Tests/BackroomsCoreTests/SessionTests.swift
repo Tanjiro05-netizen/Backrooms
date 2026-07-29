@@ -364,3 +364,5 @@ final class SessionTests: XCTestCase {
         }
     }
 }
+
+#endif
