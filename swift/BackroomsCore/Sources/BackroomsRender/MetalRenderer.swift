@@ -28,6 +28,10 @@ public final class MetalRenderer {
         public var wallMaterial: Material?
         public var floorMaterial: Material?
         public var ceilingMaterial: Material?
+        /// Objectives. Rebuilt when a tape is taken or the door moves, which is
+        /// rare enough to re-upload rather than stream.
+        public var propsDark: (buffer: MTLBuffer, vertexCount: Int)?
+        public var propsBright: (buffer: MTLBuffer, vertexCount: Int)?
 
         public var totalVertices: Int {
             chunkBuffers.reduce(0) { $0 + $1.vertexCount }
@@ -45,6 +49,9 @@ public final class MetalRenderer {
     private var fallbackTexture: MTLTexture?
     /// Near-black, so the entity reads as a silhouette rather than a beige man.
     private var entityTexture: MTLTexture?
+    /// Bright warm off-white for the door frame and tape labels — objectives
+    /// have to be findable across a dark room.
+    private var markerTexture: MTLTexture?
     /// Neutral stand-ins for anything drawn without a full material.
     private var flatNormalTexture: MTLTexture?
     private var flatRoughTexture: MTLTexture?
@@ -122,6 +129,7 @@ public final class MetalRenderer {
 
         fallbackTexture = makeSolidTexture(r: 186, g: 174, b: 128)
         entityTexture = makeSolidTexture(r: 26, g: 24, b: 24)
+        markerTexture = makeSolidTexture(r: 232, g: 224, b: 196)
         // (0,0,1) in tangent space encodes to (128,128,255).
         flatNormalTexture = makeSolidTexture(r: 128, g: 128, b: 255)
         flatRoughTexture = makeSolidTexture(r: 235, g: 235, b: 235)
@@ -263,6 +271,14 @@ public final class MetalRenderer {
         return texture
     }
 
+    /// Replaces the objective geometry on an existing scene. Cheap enough to
+    /// call whenever a tape is taken — it is a few dozen boxes.
+    public func updateProps(in scene: inout LevelScene,
+                            dark: InterleavedMesh, bright: InterleavedMesh) {
+        scene.propsDark = upload(dark)
+        scene.propsBright = upload(bright)
+    }
+
     private func upload(_ mesh: InterleavedMesh) -> (MTLBuffer, Int)? {
         guard !mesh.isEmpty else { return nil }
         let bytes = mesh.vertices.count * MemoryLayout<Float>.size
@@ -327,6 +343,24 @@ public final class MetalRenderer {
             bind(material)
             encoder.setVertexBuffer(plane.buffer, offset: 0, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: plane.vertexCount)
+        }
+
+        // Objectives. Double-sided, because a cassette is thin and the door
+        // frame is meant to be legible from the back as well as the front.
+        if scene.propsDark != nil || scene.propsBright != nil {
+            encoder.setCullMode(.none)
+            encoder.setFragmentTexture(flatNormalTexture, index: 1)
+            encoder.setFragmentTexture(flatRoughTexture, index: 2)
+            if let props = scene.propsDark, let entityTexture {
+                encoder.setFragmentTexture(entityTexture, index: 0)
+                encoder.setVertexBuffer(props.buffer, offset: 0, index: 0)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: props.vertexCount)
+            }
+            if let props = scene.propsBright, let markerTexture {
+                encoder.setFragmentTexture(markerTexture, index: 0)
+                encoder.setVertexBuffer(props.buffer, offset: 0, index: 0)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: props.vertexCount)
+            }
         }
 
         // The entity last, on its own dark albedo, and double-sided: its limbs
