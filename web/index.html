@@ -3708,6 +3708,27 @@ const VHS_FRAG=[
 'uniform float lowbatt;','uniform float dead;','uniform float heat;',
 'uniform float intensity;','uniform float aspect43;','uniform float sat;','uniform float dropout;',
 'uniform float bloomAmt;','uniform vec2 res;',
+/* =========================================================
+   ANALOG TAPE MODEL
+
+   What actually makes VHS look like VHS is bandwidth, not breakage.
+   Luma is recorded at roughly 3MHz (~240 lines across the picture) while
+   chroma is squeezed into a colour-under carrier under 700kHz (~40 lines).
+   So colour smears about eight times wider than brightness, and lags it
+   slightly to the right. That single asymmetry is the signature.
+
+   Everything else here is a real transport artifact: time-base error from
+   tape stretch (verticals that are never quite straight), the head-switch
+   band burned into the bottom few scanlines, horizontally-correlated tape
+   noise that streaks along the line rather than sitting on pixels, lifted
+   blacks from the composite pedestal, and the edge overshoot every consumer
+   VCR added to make a soft picture read sharp.
+
+   Deliberately absent: per-pixel scanline stripes (a CRT never had gaps
+   between lines and a tape certainly does not), barrel distortion, RGB
+   channel splitting, roaming tearing, datamosh blocks. Those are digital
+   or optical, and they are what makes fake VHS look fake.
+   ========================================================= */
 'float hash(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}',
 'float n2(vec2 p){vec2 i=floor(p);vec2 f=fract(p);f=f*f*(3.0-2.0*f);',
 ' float a=hash(i);float b=hash(i+vec2(1.0,0.0));float c=hash(i+vec2(0.0,1.0));float d=hash(i+vec2(1.0,1.0));',
@@ -3715,109 +3736,116 @@ const VHS_FRAG=[
 'vec3 T(vec2 u){return texture2D(tDiffuse,u).rgb;}',
 'float LUM(vec3 c){return dot(c,vec3(0.299,0.587,0.114));}',
 'void main(){',
-' float V=clamp(intensity,0.0,1.0);',      /* master VHS amount */
-' float tt=mod(time,60.0);',
-' float G=glitch+dead*2.2;',
-/* --- 4:3 pillarbox: crop widescreen into a centred 4:3 window --- */
+' float V=clamp(intensity,0.0,1.0);',
+' float tt=mod(time,600.0);',
+' float G=glitch+dead*1.8;',
+' float px=1.0/res.x;',
+' float LINES=486.0;',                          /* NTSC active lines */
+' float field=floor(tt*59.94);',
+/* --- 4:3 pillarbox: framing, not an artifact --- */
 ' vec2 sUv=vUv;',
 ' float scrAsp=res.x/max(1.0,res.y);',
 ' float winW=mix(1.0,min(1.0,(4.0/3.0)/scrAsp),aspect43);',
 ' float x0=(1.0-winW)*0.5;',
 ' float inWin=step(x0,sUv.x)*step(sUv.x,1.0-x0);',
 ' sUv.x=(sUv.x-x0)/winW;',
-/* --- lens barrel distortion (kept subtle — the image must stay scrutinizable) --- */
-' vec2 cc=sUv-0.5;',
-' float r2=dot(cc,cc);',
-' vec2 uv=0.5+cc*(1.0+(0.028+0.020*V)*r2+0.025*r2*r2);',
-/* --- heat shimmer (level 2) --- */
-' uv.x+=sin(uv.y*70.0+tt*9.0)*0.0016*heat;',
-' uv.y+=sin(uv.x*50.0-tt*7.0)*0.0010*heat;',
-/* --- vertical hold roll (rare) --- */
-' float rollGate=step(0.9975-dead*0.5-glitch*0.02,hash(vec2(floor(tt*2.5),7.0)));',
-' uv.y=fract(uv.y+rollGate*(n2(vec2(tt*6.0,0.0))*0.6));',
-/* --- tracking band: intermittent, not a permanent roaming wobble --- */
-' float bandPos=fract(tt*0.11+0.3);',
-' float band=smoothstep(0.08,0.0,abs(uv.y-bandPos));',
-' float bGate=smoothstep(0.62,0.80,n2(vec2(tt*0.35,4.0)));',   /* drifts in & out */
-' float trackAmt=band*(0.0012*bGate+0.05*G+0.04*lowbatt*step(0.93,hash(vec2(floor(tt*2.0),3.0))));',
-' uv.x+=(n2(vec2(uv.y*140.0,tt*28.0))-0.5)*trackAmt*8.0*(0.4+V);',
-' uv.x+=(hash(vec2(floor(uv.y*res.y),floor(tt*60.0)))-0.5)*(0.0004+G*0.010)*(0.4+V);',
-' uv.x+=dead*(n2(vec2(floor(uv.y*30.0),tt*20.0))-0.5)*0.35;',
-/* --- head-switch tear along the bottom scanlines --- */
-' float hb=0.035+0.015*V;',
-' float hsw=smoothstep(hb,0.0,sUv.y);',
-' uv.x+=hsw*(n2(vec2(tt*40.0,sUv.y*420.0))-0.5)*0.20*(0.4+V);',
-/* ========== LUMA: sharp with ringing/overshoot ========== */
-' float px=1.0/res.x;',
-' vec3 c0=T(uv);',
-' float Y=LUM(c0);',
-' float Yl=LUM(T(uv-vec2(px*2.0,0.0)));',
-' float Yr=LUM(T(uv+vec2(px*2.0,0.0)));',
-' Y+=(Y-(Yl+Yr)*0.5)*(0.22+0.40*V);',            /* unsharp overshoot -> ringing */
-/* ========== CHROMA: band-limited + delayed to the right ========== */
-' float cw=(1.2+6.0*V)*px;',                       /* chroma bandwidth (blur width) */
-' float cd=(1.5+5.0*V)*px;',                        /* chroma delay */
+' float line=floor(sUv.y*LINES);',
+/* --- time-base error ---------------------------------------------------
+   Tape stretch and capstan wander shift each scanline a fraction of a pixel
+   sideways. The slow term is correlated down the frame, which is what makes
+   long verticals bow gently instead of shimmering; the fast term is per-line
+   and stays under a pixel. Anything bigger than this reads as damage. */
+' float tbeSlow=(n2(vec2(line*0.030,tt*0.5))-0.5);',
+' float tbeFast=(hash(vec2(line,field))-0.5);',
+' float tbe=(tbeSlow*1.7+tbeFast*0.45)*(0.5+1.5*V)*px;',
+/* --- occasional tracking disturbance: a soft band that drifts in and out,
+   worth ~2px, not a tear. Real mistracking looks like the picture breathing. */
+' float bandY=fract(tt*0.07+0.42);',
+' float band=smoothstep(0.10,0.0,abs(sUv.y-bandY));',
+' float bandGate=smoothstep(0.70,0.88,n2(vec2(tt*0.28,4.0)));',
+' tbe+=band*bandGate*(n2(vec2(line*0.5,tt*9.0))-0.5)*3.0*px*(0.4+V);',
+/* --- head switching ----------------------------------------------------
+   The last handful of lines before vertical blanking come off the other
+   head mid-rotation and never line up. On a real deck this is always
+   present, always at the bottom, and only a few lines tall. */
+' float hswBand=11.0/LINES;',
+' float hsw=smoothstep(hswBand,0.0,sUv.y);',
+' float hswSkew=hsw*hsw*(0.55+0.45*n2(vec2(tt*2.2,9.0)));',
+/* --- heat shimmer (level 2 only, in-world) --- */
+' float shimmer=sin(sUv.y*70.0+tt*9.0)*0.0016*heat;',
+/* --- rare vertical hold slip: once in a long while, never as a strobe --- */
+' float rollGate=step(0.9993-dead*0.35,hash(vec2(floor(tt*1.5),7.0)));',
+' vec2 uv=sUv;',
+' uv.x+=tbe+shimmer+hswSkew*0.075+dead*(n2(vec2(line*0.2,tt*14.0))-0.5)*0.12;',
+' uv.y+=sin(sUv.x*50.0-tt*7.0)*0.0010*heat;',
+' uv.y=fract(uv.y+rollGate*(n2(vec2(tt*6.0,0.0))*0.5));',
+/* ========== LUMA: soft aperture, then the VCR edge overshoot ==========
+   A 3MHz aperture blurs about two pixels at this width. Consumer decks then
+   added aggressive edge enhancement on playback, which is why tape looks
+   simultaneously soft and crunchy, with a bright halo trailing each edge. */
+' float lw=(0.9+1.3*V)*px;',
+' float Y=LUM(T(uv))*0.44+LUM(T(uv-vec2(lw,0.0)))*0.28+LUM(T(uv+vec2(lw,0.0)))*0.28;',
+' float Yl=LUM(T(uv-vec2(lw*3.0,0.0)));',
+' float Yr=LUM(T(uv+vec2(lw*3.0,0.0)));',
+' Y+=(Y-(Yl+Yr)*0.5)*(0.30+0.55*V);',
+/* ========== CHROMA: colour-under bandwidth, delayed right ==========
+   ~40 lines of horizontal colour resolution against luma's ~240. This wide
+   symmetric tap is the whole reason a red sign on tape bleeds a finger's
+   width past its own edges. */
+' float cw=(4.0+14.0*V)*px;',
+' float cd=(1.0+3.0*V)*px;',
 ' vec2 cuv=uv-vec2(cd,0.0);',
 ' vec3 ca=T(cuv)*0.24;',
-' ca+=T(cuv-vec2(cw,0.0))*0.20;ca+=T(cuv+vec2(cw,0.0))*0.14;',
-' ca+=T(cuv-vec2(cw*2.0,0.0))*0.16;ca+=T(cuv+vec2(cw*2.0,0.0))*0.08;',
-' ca+=T(cuv-vec2(cw*3.5,0.0))*0.12;ca+=T(cuv+vec2(cw*3.5,0.0))*0.06;',
+' ca+=(T(cuv-vec2(cw,0.0))+T(cuv+vec2(cw,0.0)))*0.19;',
+' ca+=(T(cuv-vec2(cw*2.0,0.0))+T(cuv+vec2(cw*2.0,0.0)))*0.115;',
+' ca+=(T(cuv-vec2(cw*3.0,0.0))+T(cuv+vec2(cw*3.0,0.0)))*0.055;',
+/* VHS averages colour across adjacent lines as well, so chroma creeps
+   vertically too — just far less than it does sideways. */
+' ca=mix(ca,(ca+T(cuv+vec2(0.0,1.0/res.y))+T(cuv-vec2(0.0,1.0/res.y)))/3.0,0.55);',
 ' float I=dot(ca,vec3(0.596,-0.274,-0.322));',
 ' float Q=dot(ca,vec3(0.211,-0.523,0.312));',
-/* dot crawl: chroma cross-luminance shimmer that walks with the field */
-' float field=floor(tt*50.0);',
-' float dc=sin((uv.x*res.x+uv.y*res.y*2.0+field)*1.5708)*0.5;',
-' float cEdge=clamp(abs(I)+abs(Q),0.0,1.0);',
-' I+=dc*cEdge*0.06*V; Q-=dc*cEdge*0.06*V;',
-/* chroma noise (independent of luma noise) */
-' float cn=(hash(vec2(floor(uv.x*res.x*0.5),floor(uv.y*res.y*0.5)+field))-0.5);',
-' I+=cn*0.028*V; Q+=cn*0.028*V;',
+/* chroma noise is blotchy and slow, nothing like luma grain */
+' float cn=n2(vec2(uv.x*res.x*0.05,uv.y*res.y*0.10+tt*2.5))-0.5;',
+' I+=cn*0.055*V; Q+=cn*0.045*V;',
 ' I*=sat; Q*=sat;',
-/* ========== recombine YIQ -> RGB ========== */
-' vec3 col=vec3(Y+0.956*I+0.621*Q, Y-0.272*I-0.647*Q, Y-1.106*I+1.703*Q);',
-/* subtle residual RGB fringe for lens character */
-' vec2 dir=cc/max(0.001,sqrt(r2));',
-' float ab=(0.0004+G*0.004+r2*0.002)*(0.5+V);',
-' col.r=mix(col.r,T(uv+dir*ab).r,0.6);',
-' col.b=mix(col.b,T(uv-dir*ab).b,0.6);',
-/* bloom */
+' vec3 col=vec3(Y+0.956*I+0.621*Q,Y-0.272*I-0.647*Q,Y-1.106*I+1.703*Q);',
+/* ========== composite levels ==========
+   A 7.5 IRE pedestal lifts black off zero and the record amplifier rolls
+   highlights off gently. Tape never gives you true black or a hard clip. */
+' col=col*(1.0-0.085*V)+0.020*V;',
+' col=col/(1.0+max(vec3(0.0),col-0.82)*1.7);',
 ' col+=texture2D(tBloom,uv).rgb*bloomAmt;',
-/* colour grade: deep blacks, gentle warm cast — filmic rather than washed */
-' col=col*0.985+0.015;',
-' col=pow(max(col,0.0),vec3(0.97));',
-' col*=mix(vec3(1.0),vec3(1.03,1.0,0.94),0.5+0.5*V);',
+/* warm tape cast and the gentle desaturation of a fourth-generation dub */
+' col*=mix(vec3(1.0),vec3(1.035,1.0,0.945),V);',
 ' float lum=LUM(col);',
-' col=mix(vec3(lum),col,mix(1.0,0.92,V));',       /* gentle desaturate with intensity */
-/* luminance flutter (AGC pumping) — barely there */
-' col*=1.0-V*(0.012-0.018*hash(vec2(floor(tt*24.0),1.0)));',
+' col=mix(col,vec3(lum),0.10*V);',
+/* AGC pumping: the brightness breathes very slightly, once a second or so */
+' col*=1.0-V*0.015*(n2(vec2(tt*1.6,3.0))-0.5);',
+/* ========== tape noise ==========
+   Noise on tape is a one-dimensional signal read along each line, so it
+   streaks horizontally. Per-pixel white noise is the giveaway of a filter
+   that was applied to an image rather than modelled on a signal. */
+' float ng=hash(vec2(floor(uv.x*res.x*0.30),line+field*7.0));',
+' float nf=hash(vec2(floor(uv.x*res.x),line*3.0+field*11.0));',
+' float grain=(ng-0.5)*0.72+(nf-0.5)*0.28;',
+' col+=grain*(0.010+0.028*V+ir*0.045+G*0.05+lowbatt*0.030);',
+/* ========== dropouts ==========
+   A shed oxide particle drops one line for a few frames. Rare, short,
+   and never rhythmic. */
+' float dLine=step(0.9990-dropout*0.020-G*0.004,hash(vec2(line,floor(tt*7.0))));',
+' float dSeg=step(0.78,hash(vec2(floor(uv.x*26.0),line+floor(tt*7.0))));',
+' col+=dLine*dSeg*(0.30+0.30*dropout);',
+/* the head-switch band is mostly torn noise, not picture */
+' col=mix(col,vec3(hash(vec2(uv.x*res.x*0.6,line+field))*0.55+0.12),hsw*0.92);',
 /* IR nightshot */
 ' vec3 irc=vec3(0.20,1.0,0.28)*(lum*1.7+0.05);',
 ' col=mix(col,irc,ir);',
-/* scanlines + interlace shimmer — a texture, not a blind */
-' float sl=1.0-(0.045+0.035*V)*(0.5+0.5*sin(uv.y*res.y*3.14159));',
-' float inter=1.0-0.025*V*step(0.5,fract(uv.y*res.y*0.5+field*0.5));',
-' col*=sl*inter;',
-/* luma noise / grain: a fine film-like floor; heavy noise is event-driven */
-' float g0=hash(uv*res+vec2(tt*97.0,tt*61.0));',
-' col+=(g0-0.5)*(0.008+0.020*V+ir*0.05+G*0.06+lowbatt*0.035);',
-/* tape dropout: bright dashes ONLY during dropout events — never a baseline */
-' float ln=floor(uv.y*res.y);',
-' float dOn=step(0.01,dropout);',
-' float dRow=dOn*step(0.9985-dropout*0.012,hash(vec2(ln,floor(tt*15.0))));',
-' float dSeg=step(0.62,hash(vec2(floor(uv.x*48.0),ln+floor(tt*15.0))));',
-' col+=dRow*dSeg*(0.15+0.30*dropout)*(0.3+V);',
-/* signal-loss streaks — gated behind real glitch moments */
-' float dGate=step(0.03,G)*step(0.997-G*0.010,hash(vec2(ln,floor(tt*18.0))));',
-' float seg=step(abs(fract(uv.x*2.0+hash(vec2(ln,1.0)))-0.5),0.12);',
-' col+=dGate*seg*0.5;',
-/* head-switch static in the torn bottom band */
-' col=mix(col,vec3(g0*0.9),hsw*(0.22+0.26*V));',
-/* vignette + edge darkening — gentle falloff, no tunnel */
-' float vig=smoothstep(1.05,0.30,r2);',
-' col*=mix(0.50,1.0,vig);',
+/* a camcorder lens does fall off at the corners — gently */
+' vec2 cc=sUv-0.5;',
+' col*=mix(1.0,smoothstep(1.20,0.30,dot(cc,cc)),0.22);',
 ' if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0)col=vec3(0.0);',
 ' col*=1.0-dead*0.25;',
-' col*=inWin;',                                    /* 4:3 black bars */
+' col*=inWin;',
 ' gl_FragColor=vec4(col,1.0);',
 '}'
 ].join('\n');

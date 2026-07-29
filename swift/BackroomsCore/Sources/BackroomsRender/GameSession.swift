@@ -74,6 +74,8 @@ public final class GameSession {
     public private(set) var camera = Camera()
     public private(set) var hunter: EntityHunt?
     public private(set) var uniforms = SceneUniforms()
+    /// The tape's condition this frame. Driven from game state in `update`.
+    public var tape = VHSUniforms()
     public private(set) var scene: MetalRenderer.LevelScene?
 
     /// Seconds until the next hunt begins.
@@ -131,6 +133,9 @@ public final class GameSession {
     private var attackTimer: Double = 0
     /// Distance the hunter has travelled, driving its walk cycle.
     private var hunterStride: Double = 0
+    /// Wall clock for the tape pass — never reset, so artifacts do not jump
+    /// when a floor reloads.
+    private var tapeClock: Double = 0
     /// Hunt scheduling and spawn selection.
     private var rng: Mulberry32
     /// Tape and door placement, on its own stream on purpose: sharing one
@@ -279,6 +284,14 @@ public final class GameSession {
             intensity: environment.lightIntensity, range: environment.lightRange)
         let lamp: Float = input.lampOn ? 2.6 : 0
         uniforms.flash = SIMD4(1.0, 0.953, 0.847, lamp)
+        // `elapsed` freezes on death and resets per floor, but the tape has
+        // been running the whole time — give it its own clock.
+        tapeClock += deltaTime
+        // Mutated through a local so the inout access to `tape` never overlaps
+        // the reads of `self` that `apply` makes.
+        var tapeState = tape
+        tapeState.apply(session: self, elapsed: tapeClock)
+        tape = tapeState
     }
 
     private func step(_ dt: Double, input: Input) {

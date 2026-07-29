@@ -297,6 +297,70 @@ final class SessionTests: XCTestCase {
         let moved = zip(a.vertices, b.vertices).contains { abs($0 - $1) > 1e-3 }
         XCTAssertTrue(moved, "the silhouette is identical at two phases — no walk cycle")
     }
-}
 
-#endif
+    // MARK: - The tape
+
+    /// If this drifts from `VHSUniforms` in Shaders.metal, the tape pass reads
+    /// garbage — time as intensity, resolution as saturation.
+    func testTapeUniformsMatchTheShaderLayout() {
+        let u = VHSUniforms()
+        XCTAssertEqual(u.packed().count, VHSUniforms.floatCount)
+        XCTAssertEqual(VHSUniforms.floatCount, 12, "three float4s")
+    }
+
+    func testTapeUniformsPackInShaderOrder() {
+        var u = VHSUniforms()
+        u.time = 12; u.intensity = 0.5; u.glitch = 0.25; u.dead = 1
+        u.infrared = 0.1; u.lowBattery = 0.2; u.heat = 0.3; u.dropout = 0.4
+        u.aspect43 = 1; u.saturation = 0.9; u.resolutionX = 1920; u.resolutionY = 1080
+        let p = u.packed()
+        XCTAssertEqual(p[0], 12);   XCTAssertEqual(p[1], 0.5)
+        XCTAssertEqual(p[2], 0.25); XCTAssertEqual(p[3], 1)
+        XCTAssertEqual(p[4], 0.1);  XCTAssertEqual(p[7], 0.4)
+        XCTAssertEqual(p[8], 1);    XCTAssertEqual(p[10], 1920)
+        XCTAssertEqual(p[11], 1080)
+    }
+
+    /// The picture degrading is the warning system, so the tape has to react to
+    /// the hunter before the HUD does.
+    func testTapeDegradesAsTheHunterCloses() {
+        let session = GameSession(levelIndex: 0)
+        session.update(deltaTime: 1.0 / 60.0, input: GameSession.Input(), aspect: 1.777)
+        XCTAssertEqual(session.tape.glitch, 0, "nothing is hunting; the picture should be clean")
+        let calmDropout = session.tape.dropout
+
+        // Run until something spawns, then walk the clock forward as it closes.
+        for _ in 0..<(60 * 40) {
+            session.update(deltaTime: 1.0 / 60.0, input: GameSession.Input(), aspect: 1.777)
+            if let d = session.hunterDistance, d < 12 { break }
+        }
+        XCTAssertNotNil(session.hunterDistance, "no hunt to measure")
+        XCTAssertGreaterThan(session.tape.glitch, 0.05, "the tape ignored the entity")
+        XCTAssertGreaterThan(session.tape.dropout, calmDropout)
+        XCTAssertLessThanOrEqual(session.tape.glitch, 0.55)
+    }
+
+    /// Artifacts must not jump when a floor reloads — the tape has been running
+    /// the whole time even though the level clock resets.
+    func testTapeClockSurvivesAFloorChange() {
+        let session = GameSession(levelIndex: 0)
+        for _ in 0..<120 {
+            session.update(deltaTime: 1.0 / 60.0, input: GameSession.Input(), aspect: 1.777)
+        }
+        let before = session.tape.time
+        XCTAssertGreaterThan(before, 1.9)
+        session.restart(renderer: nil)
+        session.update(deltaTime: 1.0 / 60.0, input: GameSession.Input(), aspect: 1.777)
+        XCTAssertEqual(session.elapsed, 1.0 / 60.0, accuracy: 1e-9, "the floor clock resets")
+        XCTAssertGreaterThan(session.tape.time, before, "the tape clock must not")
+    }
+
+    func testHeatShimmerOnlyOnTheFloorThatHasIt() {
+        for level in 0..<LevelSpec.standardLevels.count {
+            let session = GameSession(levelIndex: level)
+            session.update(deltaTime: 1.0 / 60.0, input: GameSession.Input(), aspect: 1.777)
+            let expected: Float = LevelSpec.standardLevels[level].theme == .pipes ? 1 : 0
+            XCTAssertEqual(session.tape.heat, expected, "level \(level) heat")
+        }
+    }
+}

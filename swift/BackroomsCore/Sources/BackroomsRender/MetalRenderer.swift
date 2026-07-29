@@ -1,6 +1,7 @@
 #if canImport(Metal)
 import Metal
 import Foundation
+import CoreGraphics
 import Dispatch
 import BackroomsCore
 
@@ -42,8 +43,20 @@ public final class MetalRenderer {
     public let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private var pipelineState: MTLRenderPipelineState?
+    private var postPipelineState: MTLRenderPipelineState?
     private var depthState: MTLDepthStencilState?
     private var samplerState: MTLSamplerState?
+    /// Clamped and unfiltered-at-edges, so the tape's horizontal smear cannot
+    /// wrap colour from the opposite side of the picture.
+    private var postSampler: MTLSamplerState?
+
+    /// The scene is drawn here, then resolved through the tape pass onto the
+    /// drawable. Rebuilt whenever the drawable changes size.
+    private var sceneColor: MTLTexture?
+    private var sceneDepth: MTLTexture?
+    private var offscreenSize: (width: Int, height: Int) = (0, 0)
+    private var offscreenColorFormat: MTLPixelFormat = .bgra8Unorm
+    private var offscreenDepthFormat: MTLPixelFormat = .depth32Float
     /// Albedo for a scene built without materials (an older `LevelScene`, or a
     /// device where texture allocation failed).
     private var fallbackTexture: MTLTexture?
@@ -113,6 +126,22 @@ public final class MetalRenderer {
         desc.depthAttachmentPixelFormat = depthFormat
         pipelineState = try device.makeRenderPipelineState(descriptor: desc)
 
+        // The tape pass: a fullscreen triangle, no vertex buffer, no depth.
+        if let postVertex = library.makeFunction(name: "vhs_vertex"),
+           let postFragment = library.makeFunction(name: "vhs_fragment") {
+            let postDesc = MTLRenderPipelineDescriptor()
+            postDesc.vertexFunction = postVertex
+            postDesc.fragmentFunction = postFragment
+            postDesc.colorAttachments[0].pixelFormat = colorFormat
+            // The resolve target is the view's descriptor, which carries a
+            // depth attachment; the pipeline must declare the same format even
+            // though the tape pass neither tests nor writes depth.
+            postDesc.depthAttachmentPixelFormat = depthFormat
+            postPipelineState = try device.makeRenderPipelineState(descriptor: postDesc)
+        }
+        offscreenColorFormat = colorFormat
+        offscreenDepthFormat = depthFormat
+
         let depthDesc = MTLDepthStencilDescriptor()
         depthDesc.depthCompareFunction = .less
         depthDesc.isDepthWriteEnabled = true
@@ -126,6 +155,13 @@ public final class MetalRenderer {
         sampDesc.tAddressMode = .repeat
         sampDesc.maxAnisotropy = 8
         samplerState = device.makeSamplerState(descriptor: sampDesc)
+
+        let postSampDesc = MTLSamplerDescriptor()
+        postSampDesc.minFilter = .linear
+        postSampDesc.magFilter = .linear
+        postSampDesc.sAddressMode = .clampToEdge
+        postSampDesc.tAddressMode = .clampToEdge
+        postSampler = device.makeSamplerState(descriptor: postSampDesc)
 
         fallbackTexture = makeSolidTexture(r: 186, g: 174, b: 128)
         entityTexture = makeSolidTexture(r: 26, g: 24, b: 24)
@@ -294,16 +330,36 @@ public final class MetalRenderer {
     /// `entity`, when present, is world-space geometry rebuilt this frame.
     public func draw(scene: LevelScene, uniforms: SceneUniforms,
                      entity: InterleavedMesh? = nil,
+                     tape: VHSUniforms? = nil,
+                     drawableSize: CGSize = .zero,
                      passDescriptor: MTLRenderPassDescriptor,
                      drawable: MTLDrawable?) {
         guard let pipelineState else { return }
+
+        // With a tape pass the scene goes to an offscreen colour target first
+        // and the supplied descriptor becomes the resolve target. Without one
+        // the scene is drawn straight into it, exactly as before.
+        let width = Int(drawableSize.width), height = Int(drawableSize.height)
+        let scenePass: MTLRenderPassDescriptor
+        let useTape: Bool
+        if tape != nil, postPipelineState != nil,
+           width > 0, height > 0,
+           let offscreen = offscreenPass(width: width, height: height,
+                                         clearColor: passDescriptor.colorAttachments[0].clearColor) {
+            scenePass = offscreen
+            useTape = true
+        } else {
+            scenePass = passDescriptor
+            useTape = false
+        }
+
         inFlight.wait()
         guard let commandBuffer = commandQueue.makeCommandBuffer() else {
             inFlight.signal()
             return
         }
         commandBuffer.addCompletedHandler { [sem = inFlight] _ in sem.signal() }
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) else {
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: scenePass) else {
             commandBuffer.commit()
             return
         }
@@ -385,8 +441,57 @@ public final class MetalRenderer {
         }
 
         encoder.endEncoding()
+
+        if useTape, var tapeUniforms = tape,
+           let postPipelineState, let sceneColor,
+           let postEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) {
+            tapeUniforms.resolutionX = Float(width)
+            tapeUniforms.resolutionY = Float(height)
+            var packed = tapeUniforms.packed()
+            postEncoder.setRenderPipelineState(postPipelineState)
+            postEncoder.setFragmentBytes(&packed,
+                                         length: packed.count * MemoryLayout<Float>.size, index: 0)
+            postEncoder.setFragmentTexture(sceneColor, index: 0)
+            if let postSampler { postEncoder.setFragmentSamplerState(postSampler, index: 0) }
+            postEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+            postEncoder.endEncoding()
+        }
+
         if let drawable { commandBuffer.present(drawable) }
         commandBuffer.commit()
+    }
+
+    /// Lazily (re)allocates the offscreen colour and depth targets and returns
+    /// a pass that clears and renders into them.
+    private func offscreenPass(width: Int, height: Int,
+                               clearColor: MTLClearColor) -> MTLRenderPassDescriptor? {
+        if sceneColor == nil || offscreenSize != (width, height) {
+            let colorDesc = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: offscreenColorFormat, width: width, height: height, mipmapped: false)
+            colorDesc.usage = [.renderTarget, .shaderRead]
+            colorDesc.storageMode = .private
+            let depthDesc = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: offscreenDepthFormat, width: width, height: height, mipmapped: false)
+            depthDesc.usage = [.renderTarget]
+            depthDesc.storageMode = .private
+            guard let color = device.makeTexture(descriptor: colorDesc),
+                  let depth = device.makeTexture(descriptor: depthDesc) else { return nil }
+            sceneColor = color
+            sceneDepth = depth
+            offscreenSize = (width, height)
+        }
+        guard let sceneColor, let sceneDepth else { return nil }
+
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = sceneColor
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].storeAction = .store
+        pass.colorAttachments[0].clearColor = clearColor
+        pass.depthAttachment.texture = sceneDepth
+        pass.depthAttachment.loadAction = .clear
+        pass.depthAttachment.storeAction = .dontCare
+        pass.depthAttachment.clearDepth = 1.0
+        return pass
     }
 
     public enum RendererError: Error {

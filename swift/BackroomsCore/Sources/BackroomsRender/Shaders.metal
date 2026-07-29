@@ -171,3 +171,204 @@ fragment float4 level_fragment(VertexOut in [[stage_in]],
     color = (color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14);
     return float4(clamp(color, 0.0, 1.0), 1.0);
 }
+
+/* =========================================================
+   THE TAPE
+
+   Port of the web build's VHS composite pass. See the GLSL for the reasoning;
+   the short version is that VHS is defined by bandwidth, not breakage. Luma
+   gets ~3MHz (about 240 lines across the picture), chroma is squeezed into a
+   colour-under carrier below 700kHz (about 40 lines), so colour smears roughly
+   eight times wider than brightness and lags it slightly to the right. That
+   asymmetry is the signature; the rest is transport artifacts.
+
+   Deliberately absent: per-pixel scanline stripes, barrel distortion, RGB
+   channel splitting, roaming tears, datamosh. Those are digital or optical,
+   and they are what makes fake VHS look fake.
+
+   The GLSL works in y-up UVs. Metal textures are y-down, so all the maths
+   below stays y-up and only the sample call flips.  */
+
+struct VHSUniforms {
+    float4 timeIntensity;   // time, intensity, glitch, dead
+    float4 signal;          // ir, lowbatt, heat, dropout
+    float4 frame;           // aspect43, saturation, resX, resY
+};
+
+struct PostOut {
+    float4 position [[position]];
+    float2 uv;              // y-up
+};
+
+vertex PostOut vhs_vertex(uint vid [[vertex_id]]) {
+    // One oversized triangle; cheaper than a quad and no vertex buffer.
+    const float2 corners[3] = { float2(-1.0, -3.0), float2(-1.0, 1.0), float2(3.0, 1.0) };
+    PostOut out;
+    out.position = float4(corners[vid], 0.0, 1.0);
+    out.uv = corners[vid] * 0.5 + 0.5;
+    return out;
+}
+
+static inline float vhsHash(float2 p) {
+    p = fract(p * float2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+static inline float vhsNoise(float2 p) {
+    float2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = vhsHash(i), b = vhsHash(i + float2(1.0, 0.0));
+    float c = vhsHash(i + float2(0.0, 1.0)), d = vhsHash(i + float2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+static inline float vhsLuma(float3 c) { return dot(c, float3(0.299, 0.587, 0.114)); }
+
+fragment float4 vhs_fragment(PostOut in [[stage_in]],
+                             constant VHSUniforms &u [[buffer(0)]],
+                             texture2d<float> scene [[texture(0)]],
+                             sampler samp [[sampler(0)]]) {
+    float time = u.timeIntensity.x;
+    float V = clamp(u.timeIntensity.y, 0.0, 1.0);
+    float glitch = u.timeIntensity.z;
+    float dead = u.timeIntensity.w;
+    float ir = u.signal.x, lowbatt = u.signal.y, heat = u.signal.z, dropout = u.signal.w;
+    float aspect43 = u.frame.x, sat = u.frame.y;
+    float2 res = float2(u.frame.z, u.frame.w);
+
+    float tt = fmod(time, 600.0);
+    float G = glitch + dead * 1.8;
+    float px = 1.0 / max(res.x, 1.0);
+    const float LINES = 486.0;                 // NTSC active lines
+    float field = floor(tt * 59.94);
+
+    // 4:3 pillarbox — framing, not an artifact.
+    float2 sUv = in.uv;
+    float scrAsp = res.x / max(1.0, res.y);
+    float winW = mix(1.0, min(1.0, (4.0 / 3.0) / scrAsp), aspect43);
+    float x0 = (1.0 - winW) * 0.5;
+    float inWin = step(x0, sUv.x) * step(sUv.x, 1.0 - x0);
+    sUv.x = (sUv.x - x0) / winW;
+    float line = floor(sUv.y * LINES);
+
+    // Time-base error. The slow term is correlated down the frame, which bows
+    // long verticals gently; the fast term is per-line and stays sub-pixel.
+    // Anything larger than this stops reading as tape and starts reading as
+    // damage.
+    float tbeSlow = vhsNoise(float2(line * 0.030, tt * 0.5)) - 0.5;
+    float tbeFast = vhsHash(float2(line, field)) - 0.5;
+    float tbe = (tbeSlow * 1.7 + tbeFast * 0.45) * (0.5 + 1.5 * V) * px;
+
+    // Mistracking: a soft band drifting in and out, worth a couple of pixels.
+    float bandY = fract(tt * 0.07 + 0.42);
+    float band = smoothstep(0.10, 0.0, abs(sUv.y - bandY));
+    float bandGate = smoothstep(0.70, 0.88, vhsNoise(float2(tt * 0.28, 4.0)));
+    tbe += band * bandGate * (vhsNoise(float2(line * 0.5, tt * 9.0)) - 0.5) * 3.0 * px * (0.4 + V);
+
+    // Head switching: the last lines before vertical blanking come off the
+    // other head mid-rotation and never line up. Always present, always the
+    // bottom, only a few lines tall.
+    float hsw = smoothstep(11.0 / LINES, 0.0, sUv.y);
+    float hswSkew = hsw * hsw * (0.55 + 0.45 * vhsNoise(float2(tt * 2.2, 9.0)));
+
+    float2 uv = sUv;
+    uv.x += tbe + sin(sUv.y * 70.0 + tt * 9.0) * 0.0016 * heat + hswSkew * 0.075
+          + dead * (vhsNoise(float2(line * 0.2, tt * 14.0)) - 0.5) * 0.12;
+    uv.y += sin(sUv.x * 50.0 - tt * 7.0) * 0.0010 * heat;
+
+    // Sampling helper: flip to Metal's y-down texture space.
+    #define TAP(c) scene.sample(samp, float2((c).x, 1.0 - (c).y)).rgb
+
+    // LUMA: soft aperture, then the edge overshoot every consumer deck added
+    // on playback — which is why tape looks soft and crunchy at once.
+    float lw = (0.9 + 1.3 * V) * px;
+    float Y = vhsLuma(TAP(uv)) * 0.44
+            + vhsLuma(TAP(uv - float2(lw, 0.0))) * 0.28
+            + vhsLuma(TAP(uv + float2(lw, 0.0))) * 0.28;
+    float Yl = vhsLuma(TAP(uv - float2(lw * 3.0, 0.0)));
+    float Yr = vhsLuma(TAP(uv + float2(lw * 3.0, 0.0)));
+    Y += (Y - (Yl + Yr) * 0.5) * (0.30 + 0.55 * V);
+
+    // CHROMA: colour-under bandwidth, delayed right. This wide tap is why a
+    // red sign on tape bleeds a finger's width past its own edges.
+    float cw = (4.0 + 14.0 * V) * px;
+    float cd = (1.0 + 3.0 * V) * px;
+    float2 cuv = uv - float2(cd, 0.0);
+    float3 ca = TAP(cuv) * 0.24;
+    ca += (TAP(cuv - float2(cw, 0.0)) + TAP(cuv + float2(cw, 0.0))) * 0.19;
+    ca += (TAP(cuv - float2(cw * 2.0, 0.0)) + TAP(cuv + float2(cw * 2.0, 0.0))) * 0.115;
+    ca += (TAP(cuv - float2(cw * 3.0, 0.0)) + TAP(cuv + float2(cw * 3.0, 0.0))) * 0.055;
+    // Colour is averaged across adjacent lines too, just far less than sideways.
+    float invH = 1.0 / max(res.y, 1.0);
+    ca = mix(ca, (ca + TAP(cuv + float2(0.0, invH)) + TAP(cuv - float2(0.0, invH))) / 3.0, 0.55);
+
+    float I = dot(ca, float3(0.596, -0.274, -0.322));
+    float Q = dot(ca, float3(0.211, -0.523, 0.312));
+    // Chroma noise is blotchy and slow — nothing like luma grain.
+    float cn = vhsNoise(float2(uv.x * res.x * 0.05, uv.y * res.y * 0.10 + tt * 2.5)) - 0.5;
+    I += cn * 0.055 * V;
+    Q += cn * 0.045 * V;
+    I *= sat;
+    Q *= sat;
+
+    float3 col = float3(Y + 0.956 * I + 0.621 * Q,
+                        Y - 0.272 * I - 0.647 * Q,
+                        Y - 1.106 * I + 1.703 * Q);
+
+    // Composite levels: a 7.5 IRE pedestal lifts black off zero and the record
+    // amplifier rolls highlights off. Tape gives you neither true black nor a
+    // hard clip.
+    col = col * (1.0 - 0.085 * V) + 0.020 * V;
+    col = col / (1.0 + max(float3(0.0), col - 0.82) * 1.7);
+
+    // Halation. The web build runs a separate bright-pass and blur; here a few
+    // wide taps off the same texture buy most of the glow for one pass.
+    float3 glow = float3(0.0);
+    for (int i = 0; i < 6; ++i) {
+        float a = 1.0472 * float(i);           // six directions, 60 degrees apart
+        float2 o = float2(cos(a), sin(a)) * float2(px, invH) * 9.0;
+        float3 s = TAP(uv + o);
+        glow += max(float3(0.0), s - 0.62);
+    }
+    col += glow * (0.10 + 0.06 * V);
+
+    // Warm tape cast and the desaturation of a fourth-generation dub.
+    col *= mix(float3(1.0), float3(1.035, 1.0, 0.945), V);
+    float lum = vhsLuma(col);
+    col = mix(col, float3(lum), 0.10 * V);
+    // AGC pumping: brightness breathes very slightly, about once a second.
+    col *= 1.0 - V * 0.015 * (vhsNoise(float2(tt * 1.6, 3.0)) - 0.5);
+
+    // Tape noise is a one-dimensional signal read along each line, so it
+    // streaks horizontally. Per-pixel white noise is the tell of a filter
+    // applied to an image rather than modelled on a signal.
+    float ng = vhsHash(float2(floor(uv.x * res.x * 0.30), line + field * 7.0));
+    float nf = vhsHash(float2(floor(uv.x * res.x), line * 3.0 + field * 11.0));
+    float grain = (ng - 0.5) * 0.72 + (nf - 0.5) * 0.28;
+    col += grain * (0.010 + 0.028 * V + ir * 0.045 + G * 0.05 + lowbatt * 0.030);
+
+    // Dropouts: a shed oxide particle takes out one line for a few frames.
+    // Rare, short, never rhythmic.
+    float dLine = step(0.9990 - dropout * 0.020 - G * 0.004,
+                       vhsHash(float2(line, floor(tt * 7.0))));
+    float dSeg = step(0.78, vhsHash(float2(floor(uv.x * 26.0), line + floor(tt * 7.0))));
+    col += dLine * dSeg * (0.30 + 0.30 * dropout);
+
+    // The head-switch band is mostly torn noise, not picture.
+    col = mix(col, float3(vhsHash(float2(uv.x * res.x * 0.6, line + field)) * 0.55 + 0.12),
+              hsw * 0.92);
+
+    // IR nightshot.
+    col = mix(col, float3(0.20, 1.0, 0.28) * (lum * 1.7 + 0.05), ir);
+
+    // A camcorder lens does fall off at the corners — gently.
+    float2 cc = sUv - 0.5;
+    col *= mix(1.0, smoothstep(1.20, 0.30, dot(cc, cc)), 0.22);
+
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) col = float3(0.0);
+    col *= (1.0 - dead * 0.25) * inWin;
+
+    #undef TAP
+    return float4(clamp(col, 0.0, 1.0), 1.0);
+}
