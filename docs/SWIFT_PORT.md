@@ -60,9 +60,9 @@ precompiled default library first.
 | **Renderer (Metal)** | 🟡 BackroomsRender | ✅ layout/mesh/light tests | forward pass, uniforms, mesh upload, per-frame entity mesh, albedo/normal/roughness materials with mips |
 | Game loop (`GameSession`) | ✅ BackroomsRender | ✅ hunt/death/restart/bounds | fixed 1/60 accumulator over map+player+hunter+camera |
 | **Native app target** | ✅ `ios/BackroomsNative` | ✅ builds in CI | `MTKView`, virtual stick + drag look, HUD, USE prompt, floor cards, death/rewind, win screen |
-| Audio (AVAudioEngine) | ⬜ | — | procedural synth port of the WebAudio graph |
+| Audio (AVAudioEngine) | ✅ BackroomsCore + Render | ✅ filter response, envelopes, every sound audible + bounded | procedural: no audio files exist in this project. Biquad/Envelope/Voice/AudioMixer are pure; AudioHost is one AVAudioSourceNode |
 | Input (touch/gyro) | 🟡 touch done | — | gyro still to come; reuse shell's Core Motion work |
-| VHS post chain (MSL) | ⬜ | — | the identity of the look; GLSL→MSL line-for-line |
+| VHS post chain (MSL) | ✅ BackroomsRender | ✅ uniform layout + state response | analog tape model — chroma bandwidth, time-base error, head switching; offscreen target + resolve pass |
 | Procedural textures | ✅ BackroomsCore | ✅ range/tiling/normal tests | all 4 themes' wall+floor+ceiling; grime passes reimplemented, not byte-matched |
 
 ## Renderer decision
@@ -96,10 +96,13 @@ dependency). The web renderer is deliberately simple to port:
    a floor, and is hunted. **This is where the port stands.**
 7. ✅ Procedural textures: the canvas generators as CPU pixel buffers, plus
    normal and roughness maps and a tangent frame derived from the UV layout.
-8. VHS post chain in MSL; A/B screenshot comparison against the web build.
+8. ✅ VHS post chain in MSL, rebuilt as an analog tape model rather than a
+   glitch filter; verified by rendering the web build and looking at it.
 9. ✅ Tapes, exits and the four-floor run — the native build is playable
    start to finish.
-10. AVAudioEngine synth: port `noiseBurst`-family + drone/heartbeat graph.
+10. ✅ Audio: the WebAudio graph as a pure Swift synth (`Biquad`, `Envelope`,
+    `Voice`, `AudioMixer`) behind one `AVAudioSourceNode`, with an
+    `AudioDirector` turning game state into voices and bed levels.
 11. Entity idle+seen phases, items, theme props — then switch the App Store
     target from the shell to native.
 

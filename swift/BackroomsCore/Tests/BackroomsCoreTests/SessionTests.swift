@@ -363,6 +363,114 @@ final class SessionTests: XCTestCase {
             XCTAssertEqual(session.tape.heat, expected, "level \(level) heat")
         }
     }
+    // MARK: - Audio direction
+
+    /// Footfall is paced by ground covered, not by time, so it stays in step
+    /// whether you walk, sprint, or wade.
+    func testFootstepsFireFromDistanceNotTime() {
+        let session = GameSession(levelIndex: 0)
+        var standing = 0
+        for _ in 0..<180 {
+            session.update(deltaTime: step, input: GameSession.Input(), aspect: 1.777)
+            standing += session.audio.voices.count
+        }
+        XCTAssertEqual(standing, 0, "a stationary player made footsteps")
+
+        var input = GameSession.Input()
+        input.moveZ = -1
+        var walking = 0
+        for _ in 0..<300 {
+            session.update(deltaTime: step, input: input, aspect: 1.777)
+            walking += session.audio.voices.count
+        }
+        XCTAssertGreaterThan(walking, 0, "walking made no sound at all")
+    }
+
+    /// A teleport is not travel. Without the pacer being reset it reads as
+    /// hundreds of metres covered in one frame.
+    func testTeleportingDoesNotFireAFootstep() throws {
+        let session = GameSession(levelIndex: 0)
+        let tape = try XCTUnwrap(session.tapes.first)
+        session.debugTeleport(x: tape.x, z: tape.z)
+        session.update(deltaTime: step, input: GameSession.Input(), aspect: 1.777)
+        XCTAssertTrue(session.audio.voices.isEmpty,
+                      "the jump was mistaken for walking")
+    }
+
+    /// The drone is the hunt's presence. It has to rise as the entity closes and
+    /// be silent when nothing is hunting.
+    func testTheDroneTracksTheHunter() {
+        let session = GameSession(levelIndex: 0)
+        session.update(deltaTime: step, input: GameSession.Input(), aspect: 1.777)
+        XCTAssertEqual(session.audio.droneLevel, 0, "a drone with nothing hunting")
+
+        var closest = Double.greatestFiniteMagnitude
+        var loudest: Float = 0
+        for _ in 0..<(60 * 45) {
+            session.update(deltaTime: step, input: GameSession.Input(), aspect: 1.777)
+            if let d = session.hunterDistance {
+                closest = min(closest, d)
+                loudest = max(loudest, session.audio.droneLevel)
+            }
+        }
+        XCTAssertLessThan(closest, 30, "the hunter never got close enough to measure")
+        XCTAssertGreaterThan(loudest, 0.05, "the drone never came up")
+    }
+
+    /// Behind a wall the hunt is muffled, not just quieter — that difference is
+    /// how you tell whether it has line of sight on you.
+    func testOcclusionMufflesTheHunt() {
+        let session = GameSession(levelIndex: 0)
+        var sawClear = false, sawOccluded = false
+        for _ in 0..<(60 * 60) {
+            session.update(deltaTime: step, input: GameSession.Input(), aspect: 1.777)
+            guard session.hunter != nil else { continue }
+            if session.audio.muffleCutoff > 10_000 { sawClear = true } else { sawOccluded = true }
+            if sawClear && sawOccluded { break }
+        }
+        XCTAssertTrue(sawOccluded, "the hunt was never muffled by cover")
+    }
+
+    func testDeathAndEscapeSilenceTheBeds() throws {
+        let session = GameSession(levelIndex: 0)
+        advance(session, seconds: 120)
+        XCTAssertTrue(session.isDead)
+        session.update(deltaTime: step, input: GameSession.Input(), aspect: 1.777)
+        XCTAssertEqual(session.audio.droneLevel, 0, "the drone outlived the player")
+        XCTAssertEqual(session.audio.breathLevel, 0)
+    }
+
+    /// Taking a tape and opening the door are the two moments that need
+    /// confirming by ear.
+    func testObjectivesMakeASound() throws {
+        let session = GameSession(levelIndex: 0)
+        let tape = try XCTUnwrap(session.tapes.first)
+        session.debugTeleport(x: tape.x, z: tape.z)
+        session.interact(renderer: nil)
+        session.update(deltaTime: step, input: GameSession.Input(), aspect: 1.777)
+        XCTAssertFalse(session.audio.voices.isEmpty, "recovering a tape was silent")
+
+        for _ in 0..<(GameSession.tapesPerFloor - 1) {
+            let next = try XCTUnwrap(session.tapes.first { !$0.found })
+            session.debugTeleport(x: next.x, z: next.z)
+            session.interact(renderer: nil)
+        }
+        let exit = try XCTUnwrap(session.exit)
+        session.debugTeleport(x: exit.x, z: exit.z)
+        session.interact(renderer: nil)
+        session.update(deltaTime: step, input: GameSession.Input(), aspect: 1.777)
+        XCTAssertFalse(session.audio.voices.isEmpty, "the door opened silently")
+    }
+
+    func testWaterBedOnlyInThePoolrooms() {
+        for level in 0..<LevelSpec.standardLevels.count {
+            let session = GameSession(levelIndex: level)
+            session.update(deltaTime: step, input: GameSession.Input(), aspect: 1.777)
+            let expected: Float = LevelSpec.standardLevels[level].theme == .pool ? 0.05 : 0
+            XCTAssertEqual(session.audio.waterLevel, expected, accuracy: 1e-6,
+                           "level \(level) water bed")
+        }
+    }
 }
 
 #endif

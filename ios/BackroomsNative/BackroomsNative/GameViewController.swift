@@ -12,6 +12,9 @@ final class GameViewController: UIViewController, MTKViewDelegate {
     private var mtkView: MTKView!
     private var renderer: MetalRenderer!
     private var session: GameSession!
+    /// Started lazily on the first frame: AVAudioEngine wants the audio session
+    /// already active, and it is not worth blocking launch on.
+    private var audio: AudioHost?
 
     private var input = GameSession.Input()
     private var lastFrame: CFTimeInterval = CACurrentMediaTime()
@@ -446,6 +449,25 @@ final class GameViewController: UIViewController, MTKViewDelegate {
         // Look deltas are consumed once; movement persists while held.
         input.lookDeltaX = 0
         input.lookDeltaY = 0
+
+        // The synth is a few hundred voices of arithmetic on its own thread;
+        // starting it here rather than in viewDidLoad keeps launch clean.
+        if audio == nil {
+            let host = AudioHost()
+            try? host.start()
+            audio = host
+        }
+        if let audio {
+            let decided = session.audio
+            audio.play(decided.voices)
+            audio.update { mixer in
+                mixer.waterLevel = decided.waterLevel
+                mixer.breathLevel = decided.breathLevel
+                mixer.droneLevel = decided.droneLevel
+                mixer.dronePan = decided.dronePan
+                mixer.muffleCutoff = decided.muffleCutoff
+            }
+        }
 
         if let scene = session.scene,
            let descriptor = view.currentRenderPassDescriptor {

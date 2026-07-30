@@ -76,6 +76,10 @@ public final class GameSession {
     public private(set) var uniforms = SceneUniforms()
     /// The tape's condition this frame. Driven from game state in `update`.
     public var tape = VHSUniforms()
+    /// What the audio director decided this frame — voices to play and bed
+    /// levels to apply. The view layer forwards it to an `AudioHost`; nothing
+    /// here touches AVFoundation, so the session still runs headless.
+    public private(set) var audio = AudioDirector.Output()
     public private(set) var scene: MetalRenderer.LevelScene?
 
     /// Seconds until the next hunt begins.
@@ -136,6 +140,10 @@ public final class GameSession {
     /// Wall clock for the tape pass — never reset, so artifacts do not jump
     /// when a floor reloads.
     private var tapeClock: Double = 0
+    private var director = AudioDirector()
+    /// Distance walked since the last frame, which is what paces footfall.
+    private var lastPlayerX: Double = 0
+    private var lastPlayerZ: Double = 0
     /// Hunt scheduling and spawn selection.
     private var rng: Mulberry32
     /// Tape and door placement, on its own stream on purpose: sharing one
@@ -157,6 +165,10 @@ public final class GameSession {
         self.nextHunt = EntityDef.byLevel[idx].huntTime * 0.8
         applyEnvironment()
         placeObjectives()
+        // Seed the footfall pacer at spawn, or the first frame reads the whole
+        // distance from the origin as ground covered.
+        self.lastPlayerX = player.x
+        self.lastPlayerZ = player.z
         if let renderer {
             scene = renderer.makeScene(map: map, geometry: geometry)
             uploadProps(renderer)
@@ -208,6 +220,8 @@ public final class GameSession {
         messageTime = 0
         applyEnvironment()
         placeObjectives()
+        lastPlayerX = player.x
+        lastPlayerZ = player.z
         if let renderer {
             scene = renderer.makeScene(map: map, geometry: geometry)
             uploadProps(renderer)
@@ -292,6 +306,14 @@ public final class GameSession {
         var tapeState = tape
         tapeState.apply(session: self, elapsed: tapeClock)
         tape = tapeState
+
+        // Footfall is paced by ground covered, not by time, so it stays in step
+        // whether you are walking, sprinting or being slowed by water.
+        let moved = ((player.x - lastPlayerX) * (player.x - lastPlayerX)
+                     + (player.z - lastPlayerZ) * (player.z - lastPlayerZ)).squareRoot()
+        lastPlayerX = player.x
+        lastPlayerZ = player.z
+        audio = director.update(session: self, deltaTime: deltaTime, distanceMoved: moved)
     }
 
     private func step(_ dt: Double, input: Input) {
@@ -435,6 +457,10 @@ public final class GameSession {
     /// See `PlayerSim.teleport` — for tests, not for the game.
     public func debugTeleport(x: Double, z: Double) {
         player.teleport(x: x, z: z)
+        // Without this the next frame reads the jump as ground covered and
+        // fires a stride's worth of footsteps.
+        lastPlayerX = x
+        lastPlayerZ = z
     }
 
     /// Drop the hunter in at a cell a few rooms away, as the web build does.
