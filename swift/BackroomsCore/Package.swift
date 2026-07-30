@@ -10,6 +10,11 @@ import PackageDescription
 // simulation testable on any machine, GPU or not.
 let package = Package(
     name: "BackroomsCore",
+    // Declared rather than left to default: SwiftPM otherwise assumes macOS
+    // 10.13 for `swift test`, and the audio host needs AVAudioSourceNode
+    // (10.15 / iOS 13). The app target deploys to iOS 17, so this floor only
+    // has to be low enough not to fight it and high enough to compile.
+    platforms: [.iOS(.v15), .macOS(.v12)],
     products: [
         .library(name: "BackroomsCore", targets: ["BackroomsCore"]),
         .library(name: "BackroomsRender", targets: ["BackroomsRender"])
