@@ -47,7 +47,12 @@ public final class AudioMixer {
     private var humPhase2: Double = 0
     private var dronePhase1: Double = 0
     private var dronePhase2: Double = 0
-    private var muffle: Biquad
+    /// One filter per channel. A single shared biquad fed left, right, left,
+    /// right processes an interleaved stream through one state, which mixes the
+    /// channels together through the filter history and flattens the panning —
+    /// the pan test caught exactly that.
+    private var muffleLeft: Biquad
+    private var muffleRight: Biquad
     private var muffleCutoffApplied: Double = -1
     private var scratchLeft: [Float] = []
     private var scratchRight: [Float] = []
@@ -80,7 +85,8 @@ public final class AudioMixer {
         waterFilter = Biquad.bandpass(frequency: 220, q: 0.8, sampleRate: sampleRate)
         breathFilter = Biquad.bandpass(frequency: 520, q: 0.6, sampleRate: sampleRate)
         droneFilter = Biquad.lowpass(frequency: 230, qDecibels: 4, sampleRate: sampleRate)
-        muffle = Biquad.lowpass(frequency: 19_000, qDecibels: 0.4, sampleRate: sampleRate)
+        muffleLeft = Biquad.lowpass(frequency: 19_000, qDecibels: 0.4, sampleRate: sampleRate)
+        muffleRight = Biquad.lowpass(frequency: 19_000, qDecibels: 0.4, sampleRate: sampleRate)
     }
 
     // MARK: - Triggering
@@ -149,13 +155,15 @@ public final class AudioMixer {
         // Master gain, occlusion, and a soft limiter so a pile-up of bursts
         // cannot clip the output.
         if abs(muffleCutoff - muffleCutoffApplied) > 1 {
-            muffle = Biquad.lowpass(frequency: muffleCutoff, qDecibels: 0.4,
-                                    sampleRate: sampleRate)
+            muffleLeft = Biquad.lowpass(frequency: muffleCutoff, qDecibels: 0.4,
+                                        sampleRate: sampleRate)
+            muffleRight = Biquad.lowpass(frequency: muffleCutoff, qDecibels: 0.4,
+                                         sampleRate: sampleRate)
             muffleCutoffApplied = muffleCutoff
         }
         for i in 0..<frames {
-            left[i] = AudioMixer.limit(muffle.process(scratchLeft[i] * masterGain))
-            right[i] = AudioMixer.limit(muffle.process(scratchRight[i] * masterGain))
+            left[i] = AudioMixer.limit(muffleLeft.process(scratchLeft[i] * masterGain))
+            right[i] = AudioMixer.limit(muffleRight.process(scratchRight[i] * masterGain))
         }
     }
 

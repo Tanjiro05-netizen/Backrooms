@@ -127,7 +127,7 @@ final class AudioTests: XCTestCase {
     /// Every sound must make noise and stay in range. A silent voice is the
     /// failure mode you would never notice until someone reported "no audio".
     func testEverySoundIsAudibleAndBounded() {
-        var cases: [(String, [Voice])] = [
+        let cases: [(String, [Voice])] = [
             ("footstep", [SoundBank.footstep(running: false, seed: 1)]),
             ("sprint step", [SoundBank.footstep(running: true, seed: 2)]),
             ("splash", SoundBank.splash(running: true, seed: 3)),

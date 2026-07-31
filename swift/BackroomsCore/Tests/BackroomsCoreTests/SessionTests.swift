@@ -419,16 +419,30 @@ final class SessionTests: XCTestCase {
 
     /// Behind a wall the hunt is muffled, not just quieter — that difference is
     /// how you tell whether it has line of sight on you.
-    func testOcclusionMufflesTheHunt() {
+    ///
+    /// What is asserted is the *rule*, checked every frame: the cutoff must
+    /// agree with what `lineOfSightClear` says. Asserting that occlusion
+    /// actually occurs during one particular chase would be asserting the shape
+    /// of one floor's walls, which is luck, not behaviour — a floor that
+    /// happened to be open would fail a correct implementation.
+    func testOcclusionFollowsLineOfSight() {
         let session = GameSession(levelIndex: 0)
-        var sawClear = false, sawOccluded = false
+        var framesWithHunter = 0
         for _ in 0..<(60 * 60) {
             session.update(deltaTime: step, input: GameSession.Input(), aspect: 1.777)
-            guard session.hunter != nil else { continue }
-            if session.audio.muffleCutoff > 10_000 { sawClear = true } else { sawOccluded = true }
-            if sawClear && sawOccluded { break }
+            guard let hunter = session.hunter else { continue }
+            framesWithHunter += 1
+            let clear = session.map.lineOfSightClear(ax: session.player.x, az: session.player.z,
+                                                     bx: hunter.x, bz: hunter.z)
+            if clear {
+                XCTAssertGreaterThan(session.audio.muffleCutoff, 10_000,
+                                     "line of sight was clear but the hunt was muffled")
+            } else {
+                XCTAssertLessThan(session.audio.muffleCutoff, 2_000,
+                                  "the entity was behind cover and still sounded open")
+            }
         }
-        XCTAssertTrue(sawOccluded, "the hunt was never muffled by cover")
+        XCTAssertGreaterThan(framesWithHunter, 100, "no hunt happened, so nothing was checked")
     }
 
     func testDeathAndEscapeSilenceTheBeds() throws {
