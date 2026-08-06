@@ -67,7 +67,7 @@ public struct EntityPresence {
     public static let gazeRange = 32.0
     /// How fast a sighting flees once it breaks.
     public static let fleeSpeed = 7.6
-    public static let fleeTime = 0.95
+    public static let fleeDuration = 0.95
     /// The hound needs only a quarter-second of eye contact to bolt.
     public static let fleeGaze = 0.25
     /// The smiler needs you to hold it.
@@ -313,7 +313,7 @@ public struct EntityPresence {
         let ca = cos(angle), sa = sin(angle)
         fleeDX = bx * ca - bz * sa
         fleeDZ = bx * sa + bz * ca
-        fleeTime = EntityPresence.fleeTime
+        fleeTime = EntityPresence.fleeDuration
         events.append(.fled)
     }
 
