@@ -72,7 +72,15 @@ public final class GameSession {
     public private(set) var geometry: LevelGeometry
     public private(set) var player: PlayerSim
     public private(set) var camera = Camera()
-    public private(set) var hunter: EntityHunt?
+    /// The entity's whole state machine — idle, watching you, or hunting.
+    public private(set) var presence: EntityPresence
+    /// The chase specifically, non-nil only while it is actually hunting.
+    /// Threat cues key off this rather than `presence` so a sighting standing
+    /// silently at the end of a corridor does not set off the drone.
+    public var hunter: EntityHunt? { presence.hunt }
+    /// What the entity did this frame, for audio and HUD. Accumulated across
+    /// the frame's fixed steps and cleared at the top of the next `update`.
+    public private(set) var entityEvents: [EntityPresence.Event] = []
     public private(set) var uniforms = SceneUniforms()
     /// The tape's condition this frame. Driven from game state in `update`.
     public var tape = VHSUniforms()
@@ -82,8 +90,9 @@ public final class GameSession {
     public private(set) var audio = AudioDirector.Output()
     public private(set) var scene: MetalRenderer.LevelScene?
 
-    /// Seconds until the next hunt begins.
-    public private(set) var nextHunt: Double
+    /// Seconds until the next hunt begins. Only counts down while the entity is
+    /// idle — a hunt does not schedule over itself.
+    public var nextHunt: Double { presence.nextHunt }
     public private(set) var pitch: Double = 0
     public private(set) var health: Double = 100
     /// Derived from `phase` rather than stored, so the two cannot drift apart.
@@ -122,6 +131,10 @@ public final class GameSession {
     /// Stamina a recovered tape gives back — the web build restores battery
     /// and nerve here; stamina is the resource the native build actually has.
     private static let tapeStamina = 22.0
+    /// Stamina a starting hunt guarantees you — `max(stamina, 70)` in the web
+    /// build. It is not a reward, it is the difference between a chase and an
+    /// execution.
+    private static let huntStamina = 70.0
 
     public var tapeGoal: Int { GameSession.tapesPerFloor }
     public var isFinalFloor: Bool { levelIndex == LevelSpec.standardLevels.count - 1 }
@@ -162,7 +175,8 @@ public final class GameSession {
         self.environment = Environment.forTheme(spec.theme)
         self.rng = Mulberry32(seed: LevelSpec.seed(forLevel: idx) &+ 991)
         self.objectiveRng = Mulberry32(seed: LevelSpec.seed(forLevel: idx) &+ 5387)
-        self.nextHunt = EntityDef.byLevel[idx].huntTime * 0.8
+        self.presence = EntityPresence(def: EntityDef.byLevel[idx], map: self.map,
+                                       seed: LevelSpec.seed(forLevel: idx))
         applyEnvironment()
         placeObjectives()
         // Seed the footfall pacer at spawn, or the first frame reads the whole
@@ -206,8 +220,9 @@ public final class GameSession {
         environment = Environment.forTheme(spec.theme)
         rng = Mulberry32(seed: LevelSpec.seed(forLevel: clamped) &+ 991)
         objectiveRng = Mulberry32(seed: LevelSpec.seed(forLevel: clamped) &+ 5387)
-        hunter = nil
-        nextHunt = EntityDef.byLevel[clamped].huntTime * 0.8
+        presence = EntityPresence(def: EntityDef.byLevel[clamped], map: map,
+                                  seed: LevelSpec.seed(forLevel: clamped))
+        entityEvents = []
         pitch = 0
         health = 100
         phase = .playing
@@ -259,6 +274,9 @@ public final class GameSession {
         // Look is applied per frame, not per step: it is input, not simulation.
         camera.yaw -= Float(input.lookDeltaX)
         pitch = max(-1.45, min(1.45, pitch - input.lookDeltaY))
+        // Events are per-frame, not per-step: the audio director runs once a
+        // frame, so anything left over from last frame would fire twice.
+        entityEvents.removeAll(keepingCapacity: true)
 
         if messageTime > 0 {
             messageTime -= deltaTime
@@ -323,24 +341,34 @@ public final class GameSession {
 
         attackTimer = max(0, attackTimer - dt)
 
-        if var h = hunter {
-            let before = (x: h.x, z: h.z)
-            let alive = h.step(dt: dt, playerX: player.x, playerZ: player.z,
-                               tapesFound: 0, attackReady: attackTimer <= 0)
-            let dx = h.x - before.x, dz = h.z - before.z
-            hunterStride += (dx * dx + dz * dz).squareRoot()
-
-            if h.reachedAttack {
+        // The camera is what decides whether the thing is being looked at, so
+        // the sighting phase reads the same forward vector the renderer uses.
+        let f = camera.forward
+        let events = presence.step(dt: dt, playerX: player.x, playerZ: player.z,
+                                   forwardX: Double(f.x), forwardZ: Double(f.z),
+                                   tapesFound: tapesThisFloor,
+                                   attackReady: attackTimer <= 0)
+        for event in events {
+            switch event {
+            case .attack:
                 attackTimer = GameSession.attackCooldown
                 health = max(0, health - GameSession.attackDamage)
                 if health <= 0 { phase = .dead }
+            case .huntBegan:
+                // Adrenaline: you always get a chance to run, even if you were
+                // already spent when it dropped in.
+                if player.stamina < GameSession.huntStamina {
+                    player.restoreStamina(GameSession.huntStamina - player.stamina)
+                }
+                say("—— THE SIGNAL IS SCREAMING. DO NOT STOP MOVING. ——")
+            case .vanished:
+                say("…IT WAS THERE. YOU LOOKED. IT WASN'T.")
+            default:
+                break
             }
-            hunter = alive ? h : nil
-            if !alive { nextHunt = EntityDef.byLevel[levelIndex].huntTime }
-        } else {
-            nextHunt -= dt
-            if nextHunt <= 0 { spawnHunt() }
         }
+        entityEvents += events
+        hunterStride = presence.stride
 
         updateExit(dt)
     }
@@ -392,7 +420,7 @@ public final class GameSession {
             player.restoreStamina(GameSession.tapeStamina)
             // Taking a tape is loud. The web build pulls the next hunt in to
             // 2–5s, so the reward always costs you something.
-            nextHunt = min(nextHunt, 2 + rng.nextUnit() * 3)
+            presence.scheduleHunt(within: 2 + rng.nextUnit() * 3)
 
             if tapesThisFloor >= GameSession.tapesPerFloor {
                 relocateExit()
@@ -424,7 +452,7 @@ public final class GameSession {
         e.opening = false
         e.openTime = 0
         exit = e
-        nextHunt = max(nextHunt, 11)
+        presence.delayHunt(to: 11)
         say("THE TAPES SANG — A DOOR TORE ITSELF THROUGH A WALL NEARBY.")
     }
 
@@ -463,45 +491,31 @@ public final class GameSession {
         lastPlayerZ = z
     }
 
-    /// Drop the hunter in at a cell a few rooms away, as the web build does.
-    private func spawnHunt() {
-        let dist = map.distanceField(fromX: map.worldToCellX(player.x),
-                                     z: map.worldToCellZ(player.z))
-        var candidates: [(Int, Int)] = []
-        for z in 1..<(map.grid - 1) {
-            for x in 1..<(map.grid - 1) {
-                let d = dist[x + z * map.grid]
-                if d >= 4 && d <= 7 && map.pillarMask[x + z * map.grid] == 0 {
-                    candidates.append((x, z))
-                }
-            }
-        }
-        guard !candidates.isEmpty else {
-            nextHunt = 5
-            return
-        }
-        let pick = candidates[rng.nextInt(candidates.count)]
-        hunter = EntityHunt(def: EntityDef.byLevel[levelIndex], map: map,
-                            cellX: pick.0, cellZ: pick.1,
-                            rngSeed: LevelSpec.seed(forLevel: levelIndex) &+ 7)
-        nextHunt = Double(EntityDef.byLevel[levelIndex].huntTime)
-    }
-
     /// Distance to the hunter, for a view layer that wants to show threat.
+    /// Nil during a sighting on purpose — the HUD warns you about the chase,
+    /// not about the thing quietly watching you.
     public var hunterDistance: Double? {
         guard let h = hunter else { return nil }
         let dx = h.x - player.x, dz = h.z - player.z
         return (dx * dx + dz * dz).squareRoot()
     }
 
-    /// The hunter's silhouette in world space, rebuilt each frame, or nil when
-    /// nothing is hunting. Hand straight to `MetalRenderer.draw(entity:)`.
+    /// Distance to the entity in whatever state it is in, or nil while idle.
+    public var entityDistance: Double? {
+        guard presence.isVisible else { return nil }
+        let dx = presence.x - player.x, dz = presence.z - player.z
+        return (dx * dx + dz * dz).squareRoot()
+    }
+
+    /// The entity's silhouette in world space, rebuilt each frame, or nil while
+    /// it is off the map. Hand straight to `MetalRenderer.draw(entity:)`.
     public var entityMesh: InterleavedMesh? {
-        guard let h = hunter else { return nil }
-        return EntityMesh.stickman(x: Float(h.x),
-                                   groundY: Float(map.groundHeight(atX: h.x, z: h.z)),
-                                   z: Float(h.z),
-                                   yaw: Float(h.yaw),
+        guard presence.isVisible else { return nil }
+        return EntityMesh.stickman(x: Float(presence.x),
+                                   groundY: Float(map.groundHeight(atX: presence.x,
+                                                                   z: presence.z)),
+                                   z: Float(presence.z),
+                                   yaw: Float(presence.yaw),
                                    phase: Float(hunterStride))
     }
 }

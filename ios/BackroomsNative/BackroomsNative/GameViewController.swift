@@ -533,8 +533,13 @@ final class GameViewController: UIViewController, MTKViewDelegate {
             let word = session.isFinalFloor ? "EXIT" : "DESCEND"
             text += String(format: "\n%@ ▸ %.0fM%@", word, d, exit.revealed ? "" : "  (UNFOUND)")
         }
+        // Three readings, in order of how much trouble you are in. A sighting
+        // gets no distance — knowing exactly how far away it is would defeat
+        // the point of it standing there.
         if let d = session.hunterDistance {
-            text += String(format: "\n⚠ CONTACT %.0fM", d)
+            text += String(format: "\n⚠ IT IS COMING — %.0fM", d)
+        } else if session.presence.state == .seen {
+            text += "\n▚ CONTACT"
         } else {
             text += String(format: "\nSIGNAL ▸ %.0fS", max(0, session.nextHunt))
         }

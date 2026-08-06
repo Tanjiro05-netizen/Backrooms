@@ -51,9 +51,9 @@ precompiled default library first.
 | Collider buckets | ✅ BackroomsCore | ✅ all 4 floors exact | wall+pillar rects; theme-prop colliders come with props |
 | Player movement + `collide()` + stamina | ✅ BackroomsCore | ✅ 480-frame traces, <1e-6 drift | driven by the real `updatePlayer`; tolerance not hash (transcendentals) |
 | Entity hunt navigation (`EntityHunt`) | ✅ BackroomsCore | ✅ 300-frame chase traces, exact | BFS repath + greedy descent + speed model + burst + attack; seeded crawler burst |
-| Entity defs (4 creatures) | ✅ BackroomsCore | ✅ | speed/catchR/huntTime/burst/waterSpeed |
+| Entity defs (4 creatures) | ✅ BackroomsCore | ✅ | full `ENTITY_DEFS` row incl. sight range, creep, gaze rules, base hunt delay |
 | Theme props (crates/pipes/pool platforms, fixture geo) | ⬜ | — | needs cylinder/sphere/torus emitters (`appendGeom` equivalents) |
-| Entity idle/seen phases (sighting, flee, gaze-vanish, stalker reposition) | ⬜ next | — | mixes seeded + Math.random; scenario fixtures with seeded random |
+| Entity idle/seen phases (`EntityPresence`) | ✅ BackroomsCore | ✅ placement/gaze/flee/reposition rules + determinism | sighting, creep, gaze-vanish, flee-on-gaze, stalker reposition, hunt telegraph. Web mixes `lrng()` + `Math.random()`; this port seeds both, on two separate streams |
 | Tapes / exits / level flow | ✅ BackroomsCore | ✅ placement + interaction + full run | 2 tapes/floor, door relocation, descent, escape; items still to come |
 | Nerve/sanity + horror director | ⬜ | — | port schedules; keep event weights |
 | Camera / matrix math (`Mat4`, `Camera`) | ✅ BackroomsCore | ✅ view+proj vs Three.js, exact | YXZ euler + GL and Metal depth conventions |
@@ -103,8 +103,11 @@ dependency). The web renderer is deliberately simple to port:
 10. ✅ Audio: the WebAudio graph as a pure Swift synth (`Biquad`, `Envelope`,
     `Voice`, `AudioMixer`) behind one `AVAudioSourceNode`, with an
     `AudioDirector` turning game state into voices and bed levels.
-11. Entity idle+seen phases, items, theme props — then switch the App Store
-    target from the shell to native.
+11. ✅ The entity's other two thirds: `EntityPresence` owns idle, sighting and
+    hunt as one state machine, so the thing schedules its own appearances and
+    the session just feeds it the player and the camera's facing.
+12. Items, theme props, nerve/sanity + horror director, gyro — then switch the
+    App Store target from the shell to native.
 
 ## Working agreement
 

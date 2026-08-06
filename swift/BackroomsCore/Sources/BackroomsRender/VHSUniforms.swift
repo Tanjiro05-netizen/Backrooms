@@ -1,5 +1,6 @@
 #if canImport(Metal)
 import Foundation
+import BackroomsCore
 
 /// Swift mirror of the MSL `VHSUniforms`. Three `float4`s, same reasoning as
 /// `SceneUniforms`: an all-`float4` layout cannot silently disagree across the
@@ -63,6 +64,16 @@ public struct VHSUniforms: Equatable {
             glitch = 0
             dropout = 0.15
         }
+
+        // A sighting corrupts the tape the longer you hold it in frame. That is
+        // the tell: the picture tearing is what tells you the stare is about to
+        // pay off — or that the thing is about to break and run.
+        if session.presence.state == .seen {
+            let held = Float(max(0, min(1, session.presence.gaze / EntityPresence.vanishGaze)))
+            glitch = max(glitch, 0.12 + held * 0.5)
+            dropout = max(dropout, 0.22 + held * 0.35)
+        }
+
         lowBattery = Float(max(0, min(1, (30.0 - session.player.stamina) / 30.0))) * 0.35
     }
 }

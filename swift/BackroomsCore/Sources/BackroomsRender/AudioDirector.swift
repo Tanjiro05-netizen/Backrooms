@@ -41,7 +41,6 @@ public struct AudioDirector {
     private var lastPhase: GameSession.Phase = .playing
     private var lastTapesTotal = 0
     private var lastHealth = 100.0
-    private var wasHunting = false
     private var lastDoorOpening = false
 
     public init() {}
@@ -101,15 +100,6 @@ public struct AudioDirector {
                                                      bx: hunter.x, bz: hunter.z)
             out.muffleCutoff = clear ? 19_000 : 900
 
-            if !wasHunting {
-                // First frame of a hunt: announce it with the right creature.
-                switch theme {
-                case .warehouse: out.voices.append(SoundBank.houndYelp(seed: nextSeed()))
-                case .pipes:     out.voices += SoundBank.crawlerClicks(seed: nextSeed())
-                default:         out.voices += SoundBank.growl(seed: nextSeed())
-                }
-            }
-
             // Heartbeat, quickening with proximity.
             let interval = max(0.34, 0.95 - (1 - min(1, d / 26)) * 0.5)
             heartTimer -= deltaTime
@@ -120,13 +110,56 @@ public struct AudioDirector {
         } else {
             heartTimer = 0
         }
-        wasHunting = session.hunter != nil
+
+        // --- what the entity did this frame
+        //
+        // Driven by events rather than by watching state flip, because most of
+        // these have no state to watch: a reposition leaves the entity in the
+        // same phase it was already in, and a sighting that ends by vanishing
+        // is indistinguishable afterwards from one that simply timed out. The
+        // difference is exactly what the player is supposed to hear.
+        for event in session.entityEvents {
+            switch event {
+            case .telegraph:
+                // ~1.4s of warning before it drops in. The growl is the only
+                // thing standing between a hunt and an ambush.
+                out.voices += SoundBank.growl(seed: nextSeed())
+            case .huntBegan:
+                switch theme {
+                case .warehouse: out.voices.append(SoundBank.houndYelp(seed: nextSeed()))
+                case .pipes:     out.voices += SoundBank.crawlerClicks(seed: nextSeed())
+                default:         out.voices += SoundBank.growl(seed: nextSeed())
+                }
+            case .sighting:
+                out.voices += SoundBank.sightingSting(seed: nextSeed())
+            case .fled:
+                out.voices.append(SoundBank.houndYelp(seed: nextSeed()))
+                out.voices.append(SoundBank.staticBurst(duration: 0.18, gain: 0.14,
+                                                        seed: nextSeed()))
+            case .vanished:
+                // The tape reacts to what it cannot record.
+                out.voices.append(SoundBank.staticBurst(duration: 0.42, gain: 0.22,
+                                                        seed: nextSeed()))
+            case .repositioned:
+                // Quiet. You are meant to half-notice it, not be told.
+                out.voices.append(SoundBank.staticBurst(duration: 0.14, gain: 0.10,
+                                                        seed: nextSeed()))
+            case .sightingEnded, .huntEnded, .attack:
+                break
+            }
+        }
 
         // --- beds
         out.waterLevel = theme == .pool ? 0.05 : 0
         // Breathing rises as stamina gives out, which is the only cue that you
         // are about to lose your sprint.
         out.breathLevel = Float(max(0, (30 - session.player.stamina) / 30)) * 0.05
+        // While it is standing there watching, the room breathes wrong — a bed
+        // rather than a one-shot, so it is recomputed every frame and floors
+        // whatever stamina was already asking for.
+        if session.presence.state == .seen {
+            out.breathLevel = max(out.breathLevel, 0.035)
+        }
 
         // --- one-shots on state changes
         if session.tapesTotal > lastTapesTotal {
