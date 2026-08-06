@@ -68,6 +68,13 @@ struct BackroomsWebView: UIViewRepresentable {
                 setGyroEnabled(payload["enabled"] as? Bool ?? false)
             case "progress":
                 saveProgress(payload["data"])
+            case "escaped":
+                GameCenter.shared.reportEscape(
+                    seconds: payload["seconds"] as? Double ?? 0,
+                    tapes: payload["tapes"] as? Int ?? 0,
+                    deaths: payload["deaths"] as? Int ?? 0)
+            case "depth":
+                GameCenter.shared.reportDepth(level: payload["level"] as? Int ?? 0)
             default:
                 break
             }

@@ -1,0 +1,70 @@
+import Foundation
+import BackroomsCore
+
+/// Builds the hunter's silhouette as world-space triangles, rebuilt each frame.
+///
+/// The level shader takes no per-object model matrix — every level vertex is
+/// already in world space — so rather than bolt one on for a single moving
+/// object, the entity is re-emitted in world space per frame. It is a few
+/// hundred vertices; the transform cost is noise next to the draw call, and it
+/// keeps the shader and the vertex layout identical for everything on screen.
+///
+/// The shape is the web build's "eerie stickman": far too tall, limbs far too
+/// thin, head far too small. It reads as a silhouette at fog distance, which is
+/// the whole point — you should recognise it before you can resolve it.
+public enum EntityMesh {
+
+    /// Overall height in metres. Deliberately above human scale.
+    public static let height: Float = 2.35
+
+    /// Seven boxes: two legs, torso, two arms, neck, head.
+    public static let boxCount = 7
+
+    /// One stickman, standing on `groundY`, facing `yaw` (same convention as the
+    /// camera: yaw 0 looks down −Z). `phase` drives the walk cycle — pass the
+    /// distance travelled so the stride tracks actual speed rather than time.
+    public static func stickman(x: Float, groundY: Float, z: Float,
+                                yaw: Float, phase: Float) -> InterleavedMesh {
+        var b = MeshBuilder(reservingBoxes: boxCount)
+
+        // Limbs swing in antiphase; arms trail the legs, which reads as a lope.
+        let swing = sinf(phase * 2.6) * 0.34
+        let armSwing = -swing * 0.8
+        let bob = fabsf(sinf(phase * 2.6)) * 0.045
+
+        let h = EntityMesh.height
+        let hipY = h * 0.50 + bob
+        let shoulderY = h * 0.84 + bob
+        let headY = h * 0.93 + bob
+
+        /// A limb as a vertical box displaced along Z by its swing. Crude next
+        /// to a real skeleton, but at fog distance the stride is all that reads.
+        func limb(cx: Float, top: Float, bottom: Float, halfW: Float, lean: Float) {
+            let len = top - bottom
+            b.addBox(originX: x, originY: groundY, originZ: z, yaw: yaw,
+                     localX: cx, localY: (top + bottom) * 0.5,
+                     localZ: sinf(lean) * len * 0.5,
+                     halfX: halfW, halfY: len * 0.5, halfZ: halfW)
+        }
+
+        let legHalf: Float = 0.048
+        let armHalf: Float = 0.038
+        limb(cx: -0.11, top: hipY, bottom: 0, halfW: legHalf, lean: swing)
+        limb(cx: 0.11, top: hipY, bottom: 0, halfW: legHalf, lean: -swing)
+        // Torso: a narrow slab, slightly deeper than it is wide.
+        b.addBox(originX: x, originY: groundY, originZ: z, yaw: yaw,
+                 localX: 0, localY: (hipY + shoulderY) * 0.5, localZ: 0,
+                 halfX: 0.115, halfY: (shoulderY - hipY) * 0.5, halfZ: 0.075)
+        limb(cx: -0.17, top: shoulderY, bottom: hipY * 0.62, halfW: armHalf, lean: armSwing)
+        limb(cx: 0.17, top: shoulderY, bottom: hipY * 0.62, halfW: armHalf, lean: -armSwing)
+        // Neck, then a head too small for the body.
+        b.addBox(originX: x, originY: groundY, originZ: z, yaw: yaw,
+                 localX: 0, localY: (shoulderY + headY) * 0.5, localZ: 0,
+                 halfX: 0.032, halfY: (headY - shoulderY) * 0.5, halfZ: 0.032)
+        b.addBox(originX: x, originY: groundY, originZ: z, yaw: yaw,
+                 localX: 0, localY: headY + 0.075, localZ: 0,
+                 halfX: 0.085, halfY: 0.095, halfZ: 0.080)
+
+        return b.mesh
+    }
+}

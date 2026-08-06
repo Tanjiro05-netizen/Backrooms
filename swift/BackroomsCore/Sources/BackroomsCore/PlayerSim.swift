@@ -54,6 +54,23 @@ public struct PlayerSim {
         self.limit = Double(map.grid) * map.spec.cellSize / 2 - 0.45
     }
 
+    /// Give stamina back — recovering a tape is a breather.
+    public mutating func restoreStamina(_ amount: Double) {
+        stamina = min(100, stamina + amount)
+    }
+
+    /// Drop the player somewhere directly. Nothing in the game does this — it
+    /// exists so tests can exercise what happens *at* an objective without
+    /// first walking 200 metres of corridor, which would be testing
+    /// pathfinding instead.
+    public mutating func teleport(x newX: Double, z newZ: Double) {
+        x = newX
+        z = newZ
+        vx = 0
+        vz = 0
+        groundY = map.groundHeight(atX: newX, z: newZ)
+    }
+
     /// One movement tick. Mirrors `updatePlayer`'s movement + `collide()`.
     public mutating func step(dt: Double, input: Input) {
         yaw = input.yaw

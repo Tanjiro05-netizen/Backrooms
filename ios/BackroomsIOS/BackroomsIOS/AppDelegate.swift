@@ -11,6 +11,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         try? AVAudioSession.sharedInstance().setActive(true)
         // A held camcorder must not dim mid-corridor while the player only looks.
         application.isIdleTimerDisabled = true
+        // Game Center is optional: if the player declines, the game is unchanged.
+        GameCenter.shared.authenticate { [weak application] viewController in
+            guard let root = application?.connectedScenes
+                .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
+                .first else { return }
+            root.present(viewController, animated: true)
+        }
         return true
     }
 
