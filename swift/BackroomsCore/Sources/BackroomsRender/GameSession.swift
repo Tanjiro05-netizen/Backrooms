@@ -459,7 +459,7 @@ public final class GameSession {
     private func goThroughDoor() {
         if isFinalFloor {
             phase = .escaped
-            hunter = nil
+            presence.dismiss()
         } else {
             // No timer yet — the next floor has not been built.
             phase = .awaitingDescent

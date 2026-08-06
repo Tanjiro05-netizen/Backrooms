@@ -429,6 +429,14 @@ public struct EntityPresence {
         nextHunt = min(nextHunt, seconds)
     }
 
+    /// Take it off the map now, without a sound or a schedule change. For the
+    /// moments the game ends around it — you get through the last door and
+    /// whatever was chasing you simply is not part of the story any more.
+    public mutating func dismiss() {
+        var ignored: [Event] = []
+        despawn(events: &ignored, event: .sightingEnded)
+    }
+
     /// Push it out instead. Used when the game has just disoriented the player
     /// on purpose, so the scare lands as a scare and not an ambush they had no
     /// way to read. Clears the telegraph so the cue fires again on the new time.
