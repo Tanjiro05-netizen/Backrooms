@@ -131,7 +131,7 @@ public struct AudioDirector {
                 default:         out.voices += SoundBank.growl(seed: nextSeed())
                 }
             case .sighting:
-                out.voices += SoundBank.sightingSting(seed: nextSeed())
+                out.voices.append(SoundBank.sightingSting(seed: nextSeed()))
             case .fled:
                 out.voices.append(SoundBank.houndYelp(seed: nextSeed()))
                 out.voices.append(SoundBank.staticBurst(duration: 0.18, gain: 0.14,

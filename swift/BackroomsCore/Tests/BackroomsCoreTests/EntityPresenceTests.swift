@@ -66,7 +66,7 @@ final class EntityPresenceTests: XCTestCase {
     /// The telegraph is the entire warning: the lights sag and something
     /// exhales roughly 1.4s before it drops in. Firing it late, twice, or not
     /// at all turns a hunt into an ambush.
-    func testTheTelegraphFiresOnceAndLeadsTheHunt() {
+    func testTheTelegraphLeadsTheHunt() {
         var e = presence(0)
         let (px, pz) = spawn(level(0))
         var telegraphs = 0, huntFrame = -1, telegraphFrame = -1

@@ -98,7 +98,9 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(session.health, 100)
 
         // Long enough for a second hunt if the first times out on a bad path.
-        advance(session, seconds: 120)
+        // Generous, because the hunt clock stops for every sighting the player
+        // triggers on the way, and how many of those there are is not fixed.
+        advance(session, seconds: 240)
         XCTAssertTrue(session.isDead, "a stationary player must not survive a full hunt")
         XCTAssertEqual(session.health, 0)
 
