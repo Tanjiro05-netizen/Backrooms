@@ -338,10 +338,24 @@ public struct EntityPresence {
         events.append(.repositioned)
     }
 
+    /// Is the player looking at it? `dx`/`dz` point from the entity to the
+    /// player, so the direction to test the camera against is their negation.
+    ///
+    /// This is the one place the port deliberately departs from the web build.
+    /// There, `lookDot` is taken against `player − entity` while `f` comes from
+    /// `camera.getWorldDirection()`, which genuinely points forward — so the dot
+    /// only clears 0.962 when the thing is directly *behind* you, and every
+    /// gaze rule fires inverted: the smiler vanishes when you look away, the
+    /// hound bolts at your back, and creatures creep toward you while you watch
+    /// them. The field names (`gaze`, `gazeVanish`, `fleeOnGaze`,
+    /// `creepObserved`) say what was meant, and the reposition gate only makes
+    /// sense that way round too — it looks for cover, which is nonsense if it
+    /// fires while you have it in view. Ported as written, this whole phase
+    /// plays backwards.
     private func isLookedAt(dx: Double, dz: Double, dist: Double,
                             forwardX: Double, forwardZ: Double,
                             playerX: Double, playerZ: Double) -> Bool {
-        let lookDot = forwardX * (dx / dist) + forwardZ * (dz / dist)
+        let lookDot = forwardX * (-dx / dist) + forwardZ * (-dz / dist)
         guard lookDot > EntityPresence.gazeCos, dist < EntityPresence.gazeRange else { return false }
         return map.lineOfSightClear(ax: playerX, az: playerZ, bx: x, bz: z)
     }
