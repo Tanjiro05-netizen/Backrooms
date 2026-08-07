@@ -31,12 +31,18 @@ so there is nothing to fetch and edits to the core are picked up on the next
 build. Controls: left thumb is a virtual stick — push it to the rim to sprint —
 right thumb drags to look, LAMP toggles the camcorder light.
 
-`Shaders.metal` ships as a package *resource* and is compiled at runtime rather
-than pre-built into a metallib. That is deliberate: it keeps `swift build`
-working on any machine, which is what lets CI verify the renderer without an
-app target. If you later want the ~100ms back at launch, add the `.metal` file
-to the app target's Compile Sources and `makeLibrary()` will find the
-precompiled default library first.
+`Shaders.metal` ships as a package *resource* so plain `swift build` — and
+therefore CI — can verify the renderer target with no app around it; that path
+compiles the shader source at runtime via `device.makeLibrary(source:)`.
+
+`BackroomsNative` also has the same file added directly to its own Compile
+Sources, so a real app build gets a precompiled metallib and `makeLibrary()`
+returns before the runtime path ever runs. This is the fix for a real device
+failure: the runtime resource lookup (`Bundle.module`/`Bundle.main`) had never
+been exercised outside of CI's simulator *build* — CI never launches the app —
+and came up empty the first time someone actually ran it on hardware. Keep
+both: the resource copy is what makes the package buildable standalone, the
+Compile Sources entry is what makes the app not depend on that lookup working.
 
 ## Status
 
