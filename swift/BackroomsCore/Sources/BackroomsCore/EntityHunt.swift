@@ -36,12 +36,17 @@ public struct EntityHunt {
     /// `difficulty.speed` — 1.0 on standard, 0.78 on simple.
     public var difficultySpeed = 1.0
 
+    /// `facing` is the spawn heading. The web build snaps it toward the player
+    /// rather than easing, because a visible spin on the first frame reads as
+    /// "it just appeared here" instead of "it was already coming".
     public init(def: EntityDef, map: GameMap, cellX: Int, cellZ: Int,
-                difficultyHuntTime: Double = 1.0, rngSeed: UInt32 = 12345) {
+                difficultyHuntTime: Double = 1.0, rngSeed: UInt32 = 12345,
+                facing: Double = 0) {
         self.def = def
         self.map = map
         self.x = map.cellWorldX(cellX)
         self.z = map.cellWorldZ(cellZ)
+        self.yaw = facing
         self.timer = def.huntTime * difficultyHuntTime
         self.rng = Mulberry32(seed: rngSeed)
     }

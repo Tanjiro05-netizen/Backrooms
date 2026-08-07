@@ -21,19 +21,39 @@ final class SessionTests: XCTestCase {
         }
     }
 
+    /// Run until `condition` holds, up to `limit` seconds.
+    ///
+    /// Everything that used to say "advance 21.5 seconds and a hunt will have
+    /// started" is now a guess: the hunt clock only runs while the entity is
+    /// idle, so every sighting the player happens to trigger pushes it back by
+    /// however long that sighting lasted, which depends on where the player is
+    /// looking. Waiting on the condition asserts what the test actually means
+    /// — that a hunt does come — instead of pinning a number that only held for
+    /// one arrangement of the RNG.
+    @discardableResult
+    private func advanceUntil(_ session: GameSession, limit: Double = 240,
+                              input: GameSession.Input = GameSession.Input(),
+                              _ condition: (GameSession) -> Bool) -> Bool {
+        for _ in 0..<Int(limit / step) {
+            session.update(deltaTime: step, input: input, aspect: 16.0 / 9.0)
+            if condition(session) { return true }
+        }
+        return false
+    }
+
     // MARK: - Hunt lifecycle
 
     func testHunterSpawnsAfterTheTelegraphAndClosesIn() throws {
         let session = GameSession(levelIndex: 0)
-        // Level 0's telegraph is huntTime × 0.8 = 20.8s.
-        XCTAssertEqual(session.nextHunt, 26 * 0.8, accuracy: 1e-9)
+        // The first hunt is the creature's own `baseHuntDelay`, not a fraction
+        // of how long a hunt runs for — the smiler gives you 45s of quiet.
+        XCTAssertEqual(session.nextHunt, EntityDef.smiler.baseHuntDelay, accuracy: 1e-9)
         XCTAssertNil(session.hunter, "nothing should hunt on spawn")
 
-        advance(session, seconds: 15)
+        advance(session, seconds: 40)
         XCTAssertNil(session.hunter, "hunt began early — the telegraph is the whole warning")
 
-        advance(session, seconds: 8)
-        XCTAssertNotNil(session.hunter, "hunt never began")
+        XCTAssertTrue(advanceUntil(session) { $0.hunter != nil }, "hunt never began")
 
         let first = try XCTUnwrap(session.hunterDistance)
         advance(session, seconds: 3)
@@ -52,8 +72,9 @@ final class SessionTests: XCTestCase {
     func testHunterSpawnsAtAFairDistance() throws {
         for level in 0..<LevelSpec.standardLevels.count {
             let session = GameSession(levelIndex: level)
-            advance(session, seconds: EntityDef.byLevel[level].huntTime * 0.8 + 0.5)
-            let hunter = try XCTUnwrap(session.hunter, "level \(level) never spawned a hunter")
+            XCTAssertTrue(advanceUntil(session) { $0.hunter != nil },
+                          "level \(level) never spawned a hunter")
+            let hunter = try XCTUnwrap(session.hunter)
 
             let map = session.map
             let field = map.distanceField(fromX: map.worldToCellX(session.player.x),
@@ -77,7 +98,9 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(session.health, 100)
 
         // Long enough for a second hunt if the first times out on a bad path.
-        advance(session, seconds: 120)
+        // Generous, because the hunt clock stops for every sighting the player
+        // triggers on the way, and how many of those there are is not fixed.
+        advance(session, seconds: 240)
         XCTAssertTrue(session.isDead, "a stationary player must not survive a full hunt")
         XCTAssertEqual(session.health, 0)
 
@@ -130,11 +153,19 @@ final class SessionTests: XCTestCase {
 
     // MARK: - Entity geometry
 
-    func testEntityMeshIsAbsentUntilSomethingHunts() {
+    func testEntityMeshIsAbsentWhileIdleAndPresentOtherwise() {
         let session = GameSession(levelIndex: 0)
         XCTAssertNil(session.entityMesh)
-        advance(session, seconds: 21.5)
-        XCTAssertNotNil(session.entityMesh, "a hunting entity that draws nothing is invisible")
+        XCTAssertTrue(advanceUntil(session) { $0.presence.isVisible },
+                      "the entity never appeared at all")
+        XCTAssertNotNil(session.entityMesh, "an entity on the map that draws nothing is invisible")
+
+        // And a sighting is drawn, not just a hunt — the whole point of the
+        // phase is that you can see it standing there.
+        let sawSighting = advanceUntil(GameSession(levelIndex: 0)) {
+            $0.presence.state == .seen && $0.entityMesh != nil
+        }
+        XCTAssertTrue(sawSighting, "sightings never rendered")
     }
 
     func testStickmanIsWellFormedAndStandsWhereTheHunterIs() {
@@ -330,11 +361,8 @@ final class SessionTests: XCTestCase {
         let calmDropout = session.tape.dropout
 
         // Run until something spawns, then walk the clock forward as it closes.
-        for _ in 0..<(60 * 40) {
-            session.update(deltaTime: 1.0 / 60.0, input: GameSession.Input(), aspect: 1.777)
-            if let d = session.hunterDistance, d < 12 { break }
-        }
-        XCTAssertNotNil(session.hunterDistance, "no hunt to measure")
+        XCTAssertTrue(advanceUntil(session) { ($0.hunterDistance ?? 99) < 12 },
+                      "no hunt to measure")
         XCTAssertGreaterThan(session.tape.glitch, 0.05, "the tape ignored the entity")
         XCTAssertGreaterThan(session.tape.dropout, calmDropout)
         XCTAssertLessThanOrEqual(session.tape.glitch, 0.55)
@@ -406,12 +434,12 @@ final class SessionTests: XCTestCase {
 
         var closest = Double.greatestFiniteMagnitude
         var loudest: Float = 0
-        for _ in 0..<(60 * 45) {
-            session.update(deltaTime: step, input: GameSession.Input(), aspect: 1.777)
-            if let d = session.hunterDistance {
+        advanceUntil(session) {
+            if let d = $0.hunterDistance {
                 closest = min(closest, d)
-                loudest = max(loudest, session.audio.droneLevel)
+                loudest = max(loudest, $0.audio.droneLevel)
             }
+            return false        // sample the whole window rather than stopping early
         }
         XCTAssertLessThan(closest, 30, "the hunter never got close enough to measure")
         XCTAssertGreaterThan(loudest, 0.05, "the drone never came up")
@@ -428,7 +456,7 @@ final class SessionTests: XCTestCase {
     func testOcclusionFollowsLineOfSight() {
         let session = GameSession(levelIndex: 0)
         var framesWithHunter = 0
-        for _ in 0..<(60 * 60) {
+        for _ in 0..<(60 * 240) {
             session.update(deltaTime: step, input: GameSession.Input(), aspect: 1.777)
             guard let hunter = session.hunter else { continue }
             framesWithHunter += 1
@@ -474,6 +502,85 @@ final class SessionTests: XCTestCase {
         session.interact(renderer: nil)
         session.update(deltaTime: step, input: GameSession.Input(), aspect: 1.777)
         XCTAssertFalse(session.audio.voices.isEmpty, "the door opened silently")
+    }
+
+    // MARK: - Repositioning
+
+    /// The stalker move has one hard rule: it only ever moves into somewhere the
+    /// player cannot see. The whole effect rests on it — ground it gains has to
+    /// be ground you never watched it take, or it stops being unnerving and
+    /// starts looking like a physics bug.
+    ///
+    /// This lives here rather than in the pure `EntityPresence` tests because it
+    /// needs a player who *moves*. The candidate spot is 30% of the way along
+    /// the line from the entity to the player, so against a stationary player
+    /// with clear sight it is on a segment of that same clear line and the
+    /// out-of-sight condition can never be satisfied. The behaviour only exists
+    /// once the player has walked a wall in between — which is precisely when
+    /// it should exist.
+    func testRepositionOnlyHappensOutOfSight() {
+        var repositions = 0
+        for level in 0..<LevelSpec.standardLevels.count {
+            let session = GameSession(levelIndex: level)
+            var input = GameSession.Input()
+            input.moveZ = -1
+            for frame in 0..<(60 * 240) {
+                // Sweep the view so the player keeps changing which rooms they
+                // can see into, and keeps walking into new cover.
+                input.lookDeltaX = (frame % 90 == 0) ? 0.4 : 0
+                session.update(deltaTime: step, input: input, aspect: 16.0 / 9.0)
+                guard session.entityEvents.contains(.repositioned) else { continue }
+                repositions += 1
+
+                let map = session.map
+                XCTAssertFalse(map.lineOfSightClear(ax: session.player.x, az: session.player.z,
+                                                    bx: session.presence.x, bz: session.presence.z),
+                               "level \(level): it repositioned somewhere in plain sight")
+                let cx = map.worldToCellX(session.presence.x)
+                let cz = map.worldToCellZ(session.presence.z)
+                XCTAssertEqual(map.pillarMask[cx + cz * map.grid], 0,
+                               "level \(level): it repositioned into a pillar")
+            }
+        }
+        XCTAssertGreaterThan(repositions, 0,
+                             "no reposition ever fired — the rule was never exercised")
+    }
+
+    /// A sighting must never be mistaken for a chase. The drone, the heartbeat
+    /// and the HUD's distance readout are all the hunt's, and a thing standing
+    /// silently at the end of a corridor is supposed to be silent.
+    func testASightingIsNotTreatedAsAHunt() {
+        let session = GameSession(levelIndex: 0)
+        var sightingFrames = 0
+        advanceUntil(session) {
+            guard $0.presence.state == .seen else { return false }
+            sightingFrames += 1
+            XCTAssertNil($0.hunter, "a sighting was reported as a hunt")
+            XCTAssertNil($0.hunterDistance, "a sighting put a distance on the HUD")
+            XCTAssertEqual($0.audio.droneLevel, 0, "a sighting set off the hunt drone")
+            XCTAssertNotNil($0.entityDistance, "the entity is on the map but has no distance")
+            return false
+        }
+        XCTAssertGreaterThan(sightingFrames, 0, "no sighting occurred; nothing was checked")
+    }
+
+    /// Stamina is the difference between a chase and an execution, so a hunt
+    /// that drops in on an exhausted player has to hand some back.
+    func testAHuntGivesYouTheStaminaToRun() {
+        let session = GameSession(levelIndex: 0)
+        var input = GameSession.Input()
+        input.moveZ = -1
+        input.run = true        // burn stamina down while waiting for it
+
+        var staminaAtHunt: Double?
+        advanceUntil(session, input: input) {
+            guard $0.entityEvents.contains(.huntBegan) else { return false }
+            staminaAtHunt = $0.player.stamina
+            return true
+        }
+        let stamina = staminaAtHunt ?? -1
+        XCTAssertGreaterThanOrEqual(stamina, 70,
+                                    "the hunt began with no stamina to run on")
     }
 
     func testWaterBedOnlyInThePoolrooms() {
