@@ -647,3 +647,127 @@ fragment float4 volumetric_fragment(PostOut in [[stage_in]],
 
     return float4(accum * stepLength * u.params.x, 1.0);
 }
+
+/* =========================================================
+   WATER — the Poolrooms surface
+
+   No reflection probe and no SSR to lean on, so the look is carried by three
+   things that are cheap and read correctly anyway: two normal layers scrolling
+   at different speeds and scales (one layer alone reads as a moving texture,
+   two read as water), Fresnel deciding how much of the surface is sky versus
+   depth, and absorption tinting whatever is under it by how far down it sits.
+   ========================================================= */
+
+struct WaterUniforms {
+    float4 params;      // x = time, y = surface Y, z = absorption depth, w = opacity
+    float4 tint;        // rgb = deep-water colour, w = Fresnel strength
+};
+
+/* Height-field ripple sampled procedurally rather than from a texture: it
+   costs a few sines and saves generating, uploading and sampling a map that
+   only ever holds low-frequency noise. */
+static inline float3 waterNormal(float2 p, float t) {
+    // Two layers, different scales and drift directions — the web build
+    // scrolls its normal map at (t*0.018, t*0.012); these are the same idea
+    // with the second layer added to break the obvious single-direction slide.
+    float2 aP = p * 1.0 + float2(t * 0.018, t * 0.012) * 6.0;
+    float2 bP = p * 2.7 - float2(t * 0.026, t * 0.017) * 6.0;
+
+    float aX = sin(aP.x * 1.7 + sin(aP.y * 1.1) * 0.8);
+    float aZ = cos(aP.y * 1.5 + sin(aP.x * 0.9) * 0.8);
+    float bX = sin(bP.x * 3.1 + cos(bP.y * 2.3) * 0.6);
+    float bZ = cos(bP.y * 2.9 + cos(bP.x * 2.1) * 0.6);
+
+    // Slopes, not heights: the surface is flat geometry, all of the shape is
+    // in the normal.
+    float2 slope = float2(aX * 0.055 + bX * 0.022, aZ * 0.055 + bZ * 0.022);
+    return normalize(float3(-slope.x, 1.0, -slope.y));
+}
+
+vertex VertexOut water_vertex(VertexIn in [[stage_in]],
+                              constant SceneUniforms &u [[buffer(1)]],
+                              constant WaterUniforms &w [[buffer(2)]]) {
+    VertexOut out;
+    float3 p = in.position;
+    // The whole sheet breathes, as the web build's plane does at
+    // 0.30 + sin(t*0.8)*0.012.
+    p.y += sin(w.params.x * 0.8) * 0.012;
+    out.worldPos = p;
+    out.position = u.viewProjection * float4(p, 1.0);
+    out.normal = in.normal;
+    out.uv = in.uv;
+    return out;
+}
+
+fragment float4 water_fragment(VertexOut in [[stage_in]],
+                               constant SceneUniforms &u [[buffer(1)]],
+                               constant WaterUniforms &w [[buffer(2)]],
+                               sampler samp [[sampler(0)]]) {
+    float3 N = waterNormal(in.uv, w.params.x);
+    float3 V = normalize(u.cameraPos.xyz - in.worldPos);
+
+    // Water is a dielectric like everything else, but a much smoother one —
+    // this is where GGX earns its keep, since the lamp's reflection on a
+    // near-flat surface is exactly the case Blinn-Phong handled worst.
+    const float3 F0 = float3(0.02);
+    const float roughness = 0.075;
+
+    float hemiMix = 0.5 + 0.5 * N.y;
+    float3 ambient = u.ambient.rgb * u.ambient.w
+                   + mix(u.hemiGround.rgb, u.hemiSky.rgb, hemiMix) * u.hemiSky.w;
+
+    float3 direct = float3(0.0);
+    int lightCount = min(int(u.misc.x), MAX_POINT_LIGHTS);
+    for (int i = 0; i < lightCount; ++i) {
+        float3 toL = u.pointLights[i].positionRange.xyz - in.worldPos;
+        float range = u.pointLights[i].positionRange.w;
+        float dist = length(toL);
+        if (dist > range) continue;
+        float3 L = toL / max(dist, 1e-4);
+        float atten = clamp(1.0 - dist / range, 0.0, 1.0);
+        atten *= atten;
+        float ndl = max(dot(N, L), 0.0);
+        if (ndl <= 0.0) continue;
+        float3 radiance = u.pointLights[i].colorIntensity.rgb
+                        * (u.pointLights[i].colorIntensity.w * atten);
+        direct += pbrDirect(N, V, L, w.tint.rgb, roughness, F0) * radiance * ndl;
+    }
+
+    if (u.flash.w > 0.0) {
+        float3 toC = u.cameraPos.xyz - in.worldPos;
+        float dist = length(toC);
+        float3 L = toC / max(dist, 1e-4);
+        float spot = dot(-L, normalize(u.cameraForward.xyz));
+        float cone = smoothstep(u.flashParams.y, u.flashParams.x, spot);
+        float atten = clamp(1.0 - dist / u.flashParams.z, 0.0, 1.0);
+        atten *= atten;
+        float ndl = max(dot(N, L), 0.0);
+        if (ndl > 0.0 && cone > 0.0) {
+            float3 radiance = u.flash.rgb * (u.flash.w * cone * atten);
+            direct += pbrDirect(N, V, L, w.tint.rgb, roughness, F0) * radiance * ndl;
+        }
+    }
+
+    float3 color = w.tint.rgb * ambient + direct;
+
+    // Fresnel drives opacity rather than colour: looking straight down you see
+    // the tile through it, looking along the surface you see reflected light.
+    // That angle dependence is most of what separates water from tinted glass.
+    float fresnel = pow(clamp(1.0 - max(dot(N, V), 0.0), 0.0, 1.0), 5.0);
+    fresnel = clamp(fresnel * w.tint.w, 0.0, 1.0);
+    float alpha = clamp(w.params.w + (1.0 - w.params.w) * fresnel, 0.0, 1.0);
+
+    // Same fog the level runs, or the water would stay crisp in a corridor
+    // where everything around it has faded out.
+    float d = length(u.cameraPos.xyz - in.worldPos);
+    float fd = u.hemiGround.w * d;
+    color = mix(color, u.fogColor.rgb, clamp(1.0 - exp(-fd * fd), 0.0, 1.0));
+    color *= u.flashParams.w;
+
+    // The scene target is linear HDR and the composite tone-maps; on the
+    // direct-to-drawable fallback there is nobody downstream to do it.
+    if (u.misc.y > 0.5) {
+        return float4(acesFilm(color), alpha);
+    }
+    return float4(max(color, 0.0), alpha);
+}

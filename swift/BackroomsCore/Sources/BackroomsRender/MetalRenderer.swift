@@ -34,6 +34,8 @@ public final class MetalRenderer {
         /// rare enough to re-upload rather than stream.
         public var propsDark: (buffer: MTLBuffer, vertexCount: Int)?
         public var propsBright: (buffer: MTLBuffer, vertexCount: Int)?
+        /// The Poolrooms water sheet. Nil on every other floor.
+        public var water: (buffer: MTLBuffer, vertexCount: Int)?
 
         public var totalVertices: Int {
             chunkBuffers.reduce(0) { $0 + $1.vertexCount }
@@ -53,6 +55,12 @@ public final class MetalRenderer {
     private var compositePipeline: MTLRenderPipelineState?
     private var ssaoPipeline: MTLRenderPipelineState?
     private var volumePipeline: MTLRenderPipelineState?
+    /// Water is alpha-blended, so it needs its own pipeline per target format.
+    private var waterPipelineHDR: MTLRenderPipelineState?
+    private var waterPipelineLDR: MTLRenderPipelineState?
+    /// Depth-tested but not depth-writing: a transparent surface must not
+    /// occlude what is behind it in the buffer.
+    private var waterDepthState: MTLDepthStencilState?
     private var depthState: MTLDepthStencilState?
     private var samplerState: MTLSamplerState?
     /// Depth cannot be linearly filtered on every GPU, and the screen-space
@@ -194,6 +202,30 @@ public final class MetalRenderer {
         desc.colorAttachments[0].pixelFormat = MetalRenderer.hdrFormat
         scenePipelineHDR = try device.makeRenderPipelineState(descriptor: desc)
 
+        // Water: same vertex layout as the level, but alpha-blended and
+        // depth-write disabled, so it needs its own pipeline per target format.
+        if let waterVertex = library.makeFunction(name: "water_vertex"),
+           let waterFragment = library.makeFunction(name: "water_fragment") {
+            func makeWater(_ format: MTLPixelFormat) throws -> MTLRenderPipelineState {
+                let d = MTLRenderPipelineDescriptor()
+                d.vertexFunction = waterVertex
+                d.fragmentFunction = waterFragment
+                d.vertexDescriptor = vd
+                d.colorAttachments[0].pixelFormat = format
+                d.colorAttachments[0].isBlendingEnabled = true
+                d.colorAttachments[0].rgbBlendOperation = .add
+                d.colorAttachments[0].alphaBlendOperation = .add
+                d.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+                d.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+                d.colorAttachments[0].sourceAlphaBlendFactor = .one
+                d.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+                d.depthAttachmentPixelFormat = depthFormat
+                return try device.makeRenderPipelineState(descriptor: d)
+            }
+            waterPipelineHDR = try makeWater(MetalRenderer.hdrFormat)
+            waterPipelineLDR = try makeWater(colorFormat)
+        }
+
         if let postVertex = library.makeFunction(name: "vhs_vertex") {
             // These render into plain colour textures with no depth attached,
             // so they must leave `depthAttachmentPixelFormat` invalid — unlike
@@ -223,6 +255,13 @@ public final class MetalRenderer {
         depthDesc.depthCompareFunction = .less
         depthDesc.isDepthWriteEnabled = true
         depthState = device.makeDepthStencilState(descriptor: depthDesc)
+
+        // Tested against the opaque depth, but writing nothing: water must not
+        // occlude anything in the buffer that the screen-space passes read.
+        let waterDepthDesc = MTLDepthStencilDescriptor()
+        waterDepthDesc.depthCompareFunction = .less
+        waterDepthDesc.isDepthWriteEnabled = false
+        waterDepthState = device.makeDepthStencilState(descriptor: waterDepthDesc)
 
         let sampDesc = MTLSamplerDescriptor()
         sampDesc.minFilter = .linear
@@ -316,6 +355,10 @@ public final class MetalRenderer {
         scene.ceiling = upload(InterleavedMesh.groundPlane(
             map: map, y: Float(spec.wallHeight), flipNormal: true,
             uvRepeat: Float(span / tiles.ceiling)))
+
+        // Before the material-cache early return, or a second visit to the
+        // Poolrooms would come back with no water.
+        scene.water = upload(WaterMesh.surface(map: map))
 
         if let cached = materialCache[spec.theme] {
             scene.wallMaterial = cached.wall
@@ -534,6 +577,28 @@ public final class MetalRenderer {
             encoder.setFragmentTexture(flatRoughTexture, index: 2)
             encoder.setVertexBuffer(buffer, offset: 0, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: entity.vertexCount)
+        }
+
+        // Water last: it is transparent, so it has to be composited over the
+        // opaque picture, and it must be drawn after the depth buffer is fully
+        // populated or it would blend over holes that later geometry fills in.
+        if let water = scene.water,
+           let waterPipeline = useTape ? waterPipelineHDR : waterPipelineLDR {
+            encoder.setRenderPipelineState(waterPipeline)
+            if let waterDepthState { encoder.setDepthStencilState(waterDepthState) }
+            // Visible from beneath while you are wading through it.
+            encoder.setCullMode(.none)
+
+            var waterUniforms = WaterUniforms()
+            waterUniforms.params.x = tape?.time ?? 0
+            var waterPacked = waterUniforms.packed()
+            let waterLength = waterPacked.count * MemoryLayout<Float>.size
+            // Scene uniforms are still bound at index 1 from the opaque pass.
+            encoder.setVertexBytes(&waterPacked, length: waterLength, index: 2)
+            encoder.setFragmentBytes(&waterPacked, length: waterLength, index: 2)
+            encoder.setVertexBuffer(water.buffer, offset: 0, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0,
+                                   vertexCount: water.vertexCount)
         }
 
         encoder.endEncoding()
