@@ -89,6 +89,50 @@ static inline float3x3 tangentFrame(float3 N) {
     return float3x3(T, B, N);
 }
 
+/* Cook-Torrance GGX, replacing the Blinn-Phong lobe this shader used to run.
+
+   D: Trowbridge-Reitz (GGX). G: Schlick-GGX with the direct-lighting k, paired
+   through Smith. F: Schlick.
+
+   One deliberate departure from the textbook: the diffuse term is NOT divided
+   by pi. Every light intensity in `LevelSpec`/`Environment` was authored
+   against the old non-normalised model, and dividing here would darken all four
+   floors by ~3.14x — a global lighting regression dressed up as correctness.
+   The pi is folded into the intensities instead, which is the usual
+   artist-facing convention and keeps the existing tuning meaningful.
+
+   Returns the BRDF with albedo already applied; the caller multiplies by
+   radiance and N·L. */
+static inline float3 pbrDirect(float3 N, float3 V, float3 L, float3 albedo,
+                               float roughness, float3 F0) {
+    float3 H = normalize(V + L);
+    float NdotV = max(dot(N, V), 1e-4);
+    float NdotL = max(dot(N, L), 1e-4);
+    float NdotH = max(dot(N, H), 0.0);
+    float VdotH = max(dot(V, H), 0.0);
+
+    // Perceptual roughness squared to get the GGX alpha, as everyone from
+    // Disney onward does — linear roughness maps do not read linearly.
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float denom = (NdotH * NdotH) * (a2 - 1.0) + 1.0;
+    float D = a2 / max(3.14159265 * denom * denom, 1e-6);
+
+    float k = (roughness + 1.0);
+    k = (k * k) * 0.125;                       // (r+1)^2 / 8, the direct-light k
+    float gv = NdotV / (NdotV * (1.0 - k) + k);
+    float gl = NdotL / (NdotL * (1.0 - k) + k);
+    float G = gv * gl;
+
+    float3 F = F0 + (1.0 - F0) * pow(clamp(1.0 - VdotH, 0.0, 1.0), 5.0);
+
+    float3 specular = (D * G) * F / max(4.0 * NdotV * NdotL, 1e-4);
+    // What is not reflected is transmitted into the surface and comes back
+    // diffusely — this is the energy conservation the old model simply lacked.
+    float3 kD = 1.0 - F;
+    return kD * albedo + specular;
+}
+
 /* The filmic curve the web renderer tone-maps with (the Narkowicz ACES fit).
    It lived inline at the end of `level_fragment`; it is a function now because
    the composite pass needs the same curve, and two copies of a tone-map that
@@ -113,22 +157,23 @@ fragment float4 level_fragment(VertexOut in [[stage_in]],
     float3 tn = normalTex.sample(samp, in.uv).xyz * 2.0 - 1.0;
     N = normalize(tangentFrame(N) * tn);
 
-    // 0 = mirror, 1 = fully rough. Drives both the spec lobe and its strength,
-    // so wet concrete and pool tile pick up highlights the carpet never does.
-    float roughness = clamp(roughTex.sample(samp, in.uv).r, 0.04, 1.0);
-    // Phong exponent from roughness, bounded: below ~4 the "highlight" is just
-    // a wash over the whole surface, and above ~400 it is a subpixel glint that
-    // only ever shows up as shimmer.
-    float shininess = clamp(2.0 / (roughness * roughness * roughness * roughness), 4.0, 400.0);
-    float specStrength = (1.0 - roughness) * (1.0 - roughness) * 0.6;
+    // 0 = mirror, 1 = fully rough. Under GGX this matters far more than it did
+    // under the Phong exponent it replaced: the lobe shape, its width and its
+    // energy all come off this one channel.
+    float roughness = clamp(roughTex.sample(samp, in.uv).r, 0.045, 1.0);
     float3 V = normalize(u.cameraPos.xyz - in.worldPos);
-    float3 specular = float3(0.0);
+    // Dielectric. Nothing in the Backrooms is a bare metal, and there is no
+    // metalness channel in the material set to say otherwise.
+    const float3 F0 = float3(0.04);
 
     // Hemisphere ambient: sky above, bounce below. The flat fluorescent wash
     // of the Backrooms is mostly ambient, so this carries a lot of the look.
     float hemiMix = 0.5 + 0.5 * N.y;
-    float3 light = u.ambient.rgb * u.ambient.w
-                 + mix(u.hemiGround.rgb, u.hemiSky.rgb, hemiMix) * u.hemiSky.w;
+    float3 ambient = u.ambient.rgb * u.ambient.w
+                   + mix(u.hemiGround.rgb, u.hemiSky.rgb, hemiMix) * u.hemiSky.w;
+
+    // Direct lighting, albedo already folded in — see `pbrDirect`.
+    float3 direct = float3(0.0);
 
     int lightCount = min(int(u.misc.x), MAX_POINT_LIGHTS);
     for (int i = 0; i < lightCount; ++i) {
@@ -140,14 +185,10 @@ fragment float4 level_fragment(VertexOut in [[stage_in]],
         float atten = clamp(1.0 - dist / range, 0.0, 1.0);
         atten *= atten;                                   // quadratic-ish falloff
         float ndl = max(dot(N, L), 0.0);
-        light += u.pointLights[i].colorIntensity.rgb
-               * (u.pointLights[i].colorIntensity.w * ndl * atten);
-        if (specStrength > 0.001 && ndl > 0.0) {
-            float3 H = normalize(L + V);
-            specular += u.pointLights[i].colorIntensity.rgb
-                      * (u.pointLights[i].colorIntensity.w * atten * specStrength
-                         * pow(max(dot(N, H), 0.0), shininess));
-        }
+        if (ndl <= 0.0) continue;
+        float3 radiance = u.pointLights[i].colorIntensity.rgb
+                        * (u.pointLights[i].colorIntensity.w * atten);
+        direct += pbrDirect(N, V, L, base, roughness, F0) * radiance * ndl;
     }
 
     // The camcorder lamp — a spot cone from the operator's eye.
@@ -160,16 +201,17 @@ fragment float4 level_fragment(VertexOut in [[stage_in]],
         float atten = clamp(1.0 - dist / u.flashParams.z, 0.0, 1.0);
         atten *= atten;
         float ndl = max(dot(N, L), 0.0);
-        light += u.flash.rgb * (u.flash.w * ndl * cone * atten);
-        if (specStrength > 0.001 && ndl > 0.0) {
-            float3 H = normalize(L + V);
-            specular += u.flash.rgb * (u.flash.w * cone * atten * specStrength
-                                       * pow(max(dot(N, H), 0.0), shininess));
+        if (ndl > 0.0 && cone > 0.0) {
+            float3 radiance = u.flash.rgb * (u.flash.w * cone * atten);
+            direct += pbrDirect(N, V, L, base, roughness, F0) * radiance * ndl;
         }
     }
 
+    // The vertical wall gradient the web build has. SSAO now supplies real
+    // occlusion in the composite; this stays because it is what gives the
+    // floor and ceiling junctions their particular falloff, and it is free.
     float ao = contactAO(in.worldPos.y, u.fogColor.w);
-    float3 color = (base * light + specular) * ao;
+    float3 color = (base * ambient + direct) * ao;
 
     // FogExp2, matching the web scene's falloff.
     float d = length(u.cameraPos.xyz - in.worldPos);
