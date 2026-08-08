@@ -43,9 +43,24 @@ public final class MetalRenderer {
     public let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private var pipelineState: MTLRenderPipelineState?
+    /// The same scene shader targeting the linear HDR buffer. Two pipelines
+    /// rather than two shaders — the only difference is the attachment format.
+    private var scenePipelineHDR: MTLRenderPipelineState?
     private var postPipelineState: MTLRenderPipelineState?
+    private var brightPipeline: MTLRenderPipelineState?
+    private var blurPipeline: MTLRenderPipelineState?
+    private var compositePipeline: MTLRenderPipelineState?
     private var depthState: MTLDepthStencilState?
     private var samplerState: MTLSamplerState?
+
+    /// Linear light, so a fluorescent tube can read well above 1.0 instead of
+    /// clipping to the same white as a sheet of paper.
+    static let hdrFormat: MTLPixelFormat = .rgba16Float
+    /// Bloom runs at quarter res: at full res it is four times the cost for a
+    /// result that is then deliberately blurred.
+    private static let bloomDivisor = 4
+    private static let bloomThreshold: Float = 1.0
+    private static let bloomIntensity: Float = 0.55
     /// Clamped and unfiltered-at-edges, so the tape's horizontal smear cannot
     /// wrap colour from the opposite side of the picture.
     private var postSampler: MTLSamplerState?
@@ -54,9 +69,18 @@ public final class MetalRenderer {
     /// drawable. Rebuilt whenever the drawable changes size.
     private var sceneColor: MTLTexture?
     private var sceneDepth: MTLTexture?
+    /// Bloom ping-pong at quarter res, and the tone-mapped LDR picture the
+    /// tape pass consumes.
+    private var bloomA: MTLTexture?
+    private var bloomB: MTLTexture?
+    private var compositeTexture: MTLTexture?
+    /// Stands in for the occlusion buffer until SSAO exists, so the composite
+    /// shader has one code path rather than a branch on a missing texture.
+    private var whiteTexture: MTLTexture?
     private var offscreenSize: (width: Int, height: Int) = (0, 0)
     private var offscreenColorFormat: MTLPixelFormat = .bgra8Unorm
     private var offscreenDepthFormat: MTLPixelFormat = .depth32Float
+    private var drawableColorFormat: MTLPixelFormat = .bgra8Unorm
     /// Albedo for a scene built without materials (an older `LevelScene`, or a
     /// device where texture allocation failed).
     private var fallbackTexture: MTLTexture?
@@ -139,8 +163,35 @@ public final class MetalRenderer {
             postDesc.depthAttachmentPixelFormat = depthFormat
             postPipelineState = try device.makeRenderPipelineState(descriptor: postDesc)
         }
-        offscreenColorFormat = colorFormat
+
+        // The HDR scene pipeline and the composite chain. Each is optional:
+        // a device or a shader build that cannot provide them falls back to
+        // the direct LDR path, which is the renderer as it was before.
+        desc.colorAttachments[0].pixelFormat = MetalRenderer.hdrFormat
+        scenePipelineHDR = try device.makeRenderPipelineState(descriptor: desc)
+
+        if let postVertex = library.makeFunction(name: "vhs_vertex") {
+            // These render into plain colour textures with no depth attached,
+            // so they must leave `depthAttachmentPixelFormat` invalid — unlike
+            // the tape pass, which resolves into the view's descriptor.
+            func makePost(_ name: String, _ format: MTLPixelFormat) throws -> MTLRenderPipelineState? {
+                guard let fn = library.makeFunction(name: name) else { return nil }
+                let d = MTLRenderPipelineDescriptor()
+                d.vertexFunction = postVertex
+                d.fragmentFunction = fn
+                d.colorAttachments[0].pixelFormat = format
+                return try device.makeRenderPipelineState(descriptor: d)
+            }
+            brightPipeline = try makePost("bloom_bright_fragment", MetalRenderer.hdrFormat)
+            blurPipeline = try makePost("bloom_blur_fragment", MetalRenderer.hdrFormat)
+            compositePipeline = try makePost("composite_fragment", colorFormat)
+        }
+
+        offscreenColorFormat = MetalRenderer.hdrFormat
         offscreenDepthFormat = depthFormat
+        // The composite target has to match what the tape pass was compiled
+        // against, which is the drawable's format, not the HDR scene's.
+        drawableColorFormat = colorFormat
 
         let depthDesc = MTLDepthStencilDescriptor()
         depthDesc.depthCompareFunction = .less
@@ -169,6 +220,7 @@ public final class MetalRenderer {
         // (0,0,1) in tangent space encodes to (128,128,255).
         flatNormalTexture = makeSolidTexture(r: 128, g: 128, b: 255)
         flatRoughTexture = makeSolidTexture(r: 235, g: 235, b: 235)
+        whiteTexture = makeSolidTexture(r: 255, g: 255, b: 255)
 
         dynamicBuffers = (0..<MetalRenderer.framesInFlight).compactMap { _ in
             device.makeBuffer(length: MetalRenderer.dynamicCapacityFloats * MemoryLayout<Float>.size,
@@ -342,10 +394,15 @@ public final class MetalRenderer {
         let width = Int(drawableSize.width), height = Int(drawableSize.height)
         let scenePass: MTLRenderPassDescriptor
         let useTape: Bool
-        if tape != nil, postPipelineState != nil,
+        // Every stage of the HDR chain has to be present, or the scene would be
+        // drawn in linear light with nothing downstream to tone-map it — which
+        // looks like a blown-out white screen, not like a missing effect.
+        if tape != nil, postPipelineState != nil, scenePipelineHDR != nil,
+           brightPipeline != nil, blurPipeline != nil, compositePipeline != nil,
            width > 0, height > 0,
            let offscreen = offscreenPass(width: width, height: height,
-                                         clearColor: passDescriptor.colorAttachments[0].clearColor) {
+                                         clearColor: passDescriptor.colorAttachments[0].clearColor),
+           compositeTexture != nil, bloomA != nil, bloomB != nil {
             scenePass = offscreen
             useTape = true
         } else {
@@ -364,12 +421,17 @@ public final class MetalRenderer {
             return
         }
 
-        encoder.setRenderPipelineState(pipelineState)
+        encoder.setRenderPipelineState(useTape ? (scenePipelineHDR ?? pipelineState) : pipelineState)
         if let depthState { encoder.setDepthStencilState(depthState) }
         encoder.setCullMode(.back)
         encoder.setFrontFacing(.counterClockwise)
 
-        var packed = uniforms.packed()
+        // `misc.y` tells the scene shader who tone-maps. On the HDR path the
+        // composite does it; on the direct path there is no composite, so the
+        // shader has to apply the curve itself.
+        var sceneUniforms = uniforms
+        sceneUniforms.misc.y = useTape ? 0 : 1
+        var packed = sceneUniforms.packed()
         encoder.setVertexBytes(&packed, length: packed.count * MemoryLayout<Float>.size, index: 1)
         encoder.setFragmentBytes(&packed, length: packed.count * MemoryLayout<Float>.size, index: 1)
         if let samplerState { encoder.setFragmentSamplerState(samplerState, index: 0) }
@@ -442,8 +504,29 @@ public final class MetalRenderer {
 
         encoder.endEncoding()
 
+        // Bright pass, two separable blur passes, then tone-map to LDR. The
+        // tape pass reads the composite rather than the raw scene: VHS is a
+        // model of an analog signal and its maths assumes 0…1, so it has to sit
+        // downstream of the curve, not upstream of it.
+        if useTape, let sceneColor, let bloomA, let bloomB, let compositeTexture,
+           let brightPipeline, let blurPipeline, let compositePipeline {
+            let bloomW = Float(bloomA.width), bloomH = Float(bloomA.height)
+            fullscreenPass(commandBuffer, pipeline: brightPipeline, into: bloomA,
+                           textures: [sceneColor],
+                           params: SIMD4<Float>(MetalRenderer.bloomThreshold, 0, 0, 0))
+            fullscreenPass(commandBuffer, pipeline: blurPipeline, into: bloomB,
+                           textures: [bloomA],
+                           params: SIMD4<Float>(0, 0, 1.0 / max(bloomW, 1), 0))
+            fullscreenPass(commandBuffer, pipeline: blurPipeline, into: bloomA,
+                           textures: [bloomB],
+                           params: SIMD4<Float>(0, 0, 0, 1.0 / max(bloomH, 1)))
+            fullscreenPass(commandBuffer, pipeline: compositePipeline, into: compositeTexture,
+                           textures: [sceneColor, bloomA, whiteTexture],
+                           params: SIMD4<Float>(MetalRenderer.bloomIntensity, 0, 0, 0))
+        }
+
         if useTape, var tapeUniforms = tape,
-           let postPipelineState, let sceneColor,
+           let postPipelineState, let tapeInput = compositeTexture,
            let postEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) {
             tapeUniforms.resolutionX = Float(width)
             tapeUniforms.resolutionY = Float(height)
@@ -451,7 +534,7 @@ public final class MetalRenderer {
             postEncoder.setRenderPipelineState(postPipelineState)
             postEncoder.setFragmentBytes(&packed,
                                          length: packed.count * MemoryLayout<Float>.size, index: 0)
-            postEncoder.setFragmentTexture(sceneColor, index: 0)
+            postEncoder.setFragmentTexture(tapeInput, index: 0)
             if let postSampler { postEncoder.setFragmentSamplerState(postSampler, index: 0) }
             postEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             postEncoder.endEncoding()
@@ -459,6 +542,32 @@ public final class MetalRenderer {
 
         if let drawable { commandBuffer.present(drawable) }
         commandBuffer.commit()
+    }
+
+    /// One fullscreen-triangle pass into `target`. Every stage of the composite
+    /// chain has the same shape — bind a pipeline, some textures and one float4
+    /// of parameters, draw three vertices — so they share this.
+    private func fullscreenPass(_ commandBuffer: MTLCommandBuffer,
+                                pipeline: MTLRenderPipelineState,
+                                into target: MTLTexture,
+                                textures: [MTLTexture?],
+                                params: SIMD4<Float>) {
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = target
+        // Nothing is read before it is written and the triangle covers every
+        // pixel, so there is no reason to pay for a clear.
+        pass.colorAttachments[0].loadAction = .dontCare
+        pass.colorAttachments[0].storeAction = .store
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
+        encoder.setRenderPipelineState(pipeline)
+        var p = params
+        encoder.setFragmentBytes(&p, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
+        for (index, texture) in textures.enumerated() {
+            encoder.setFragmentTexture(texture, index: index)
+        }
+        if let postSampler { encoder.setFragmentSamplerState(postSampler, index: 0) }
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        encoder.endEncoding()
     }
 
     /// Lazily (re)allocates the offscreen colour and depth targets and returns
@@ -478,6 +587,23 @@ public final class MetalRenderer {
                   let depth = device.makeTexture(descriptor: depthDesc) else { return nil }
             sceneColor = color
             sceneDepth = depth
+
+            // Bloom ping-pong, quarter res and never smaller than one pixel.
+            let bw = max(1, width / MetalRenderer.bloomDivisor)
+            let bh = max(1, height / MetalRenderer.bloomDivisor)
+            let bloomDesc = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: MetalRenderer.hdrFormat, width: bw, height: bh, mipmapped: false)
+            bloomDesc.usage = [.renderTarget, .shaderRead]
+            bloomDesc.storageMode = .private
+            bloomA = device.makeTexture(descriptor: bloomDesc)
+            bloomB = device.makeTexture(descriptor: bloomDesc)
+
+            let compositeDesc = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: drawableColorFormat, width: width, height: height, mipmapped: false)
+            compositeDesc.usage = [.renderTarget, .shaderRead]
+            compositeDesc.storageMode = .private
+            compositeTexture = device.makeTexture(descriptor: compositeDesc)
+
             offscreenSize = (width, height)
         }
         guard let sceneColor, let sceneDepth else { return nil }

@@ -89,6 +89,16 @@ static inline float3x3 tangentFrame(float3 N) {
     return float3x3(T, B, N);
 }
 
+/* The filmic curve the web renderer tone-maps with (the Narkowicz ACES fit).
+   It lived inline at the end of `level_fragment`; it is a function now because
+   the composite pass needs the same curve, and two copies of a tone-map that
+   drift apart is the kind of bug nobody sees until the screenshots disagree. */
+static inline float3 acesFilm(float3 x) {
+    x = max(x, 0.0);
+    float3 mapped = (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14);
+    return clamp(mapped, 0.0, 1.0);
+}
+
 fragment float4 level_fragment(VertexOut in [[stage_in]],
                                constant SceneUniforms &u [[buffer(1)]],
                                texture2d<float> albedo [[texture(0)]],
@@ -166,10 +176,18 @@ fragment float4 level_fragment(VertexOut in [[stage_in]],
     float fd = u.hemiGround.w * d;
     color = mix(color, u.fogColor.rgb, clamp(1.0 - exp(-fd * fd), 0.0, 1.0));
 
-    // Filmic curve, the same shape the web renderer tone-maps with.
     color *= u.flashParams.w;
-    color = (color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14);
-    return float4(clamp(color, 0.0, 1.0), 1.0);
+
+    // Two exits. Rendering into the HDR target, the picture leaves here in
+    // linear light and unclamped — the composite pass tone-maps it, and the
+    // range above 1.0 is precisely what bloom and the volumetrics need to see.
+    // Drawing straight to an 8-bit drawable (no tape pass, so no composite),
+    // there is nobody downstream to do it, so the curve is applied here as it
+    // always was.
+    if (u.misc.y > 0.5) {
+        return float4(acesFilm(color), 1.0);
+    }
+    return float4(max(color, 0.0), 1.0);
 }
 
 /* =========================================================
@@ -371,4 +389,76 @@ fragment float4 vhs_fragment(PostOut in [[stage_in]],
 
     #undef TAP
     return float4(clamp(col, 0.0, 1.0), 1.0);
+}
+
+/* =========================================================
+   HDR COMPOSITE — bright pass, separable blur, tone-map
+
+   The scene now lands in an `rgba16Float` target in linear light, so values
+   above 1.0 survive instead of clipping to white. That is the whole point:
+   a fluorescent tube reading 4.0 blooms, and the same tube clamped to 1.0 is
+   indistinguishable from a sheet of paper.
+
+   Bloom runs at quarter resolution. At full res it is four times the cost for
+   a result that is then deliberately blurred, and the tape pass grains over
+   the difference anyway.
+   ========================================================= */
+
+/* x = threshold, y = intensity, z = texel width, w = texel height. */
+
+fragment float4 bloom_bright_fragment(PostOut in [[stage_in]],
+                                      constant float4 &p [[buffer(0)]],
+                                      texture2d<float> src [[texture(0)]],
+                                      sampler samp [[sampler(0)]]) {
+    float3 c = src.sample(samp, in.uv).rgb;
+    // Soft knee rather than a hard cut: a hard threshold makes the bloom
+    // boundary crawl as the camera moves and anything hovering at the
+    // threshold flickers on and off between frames.
+    float luma = dot(c, float3(0.2126, 0.7152, 0.0722));
+    float knee = max(p.x * 0.5, 1e-4);
+    float contribution = clamp((luma - p.x + knee) / (2.0 * knee), 0.0, 1.0);
+    contribution *= contribution;
+    return float4(c * contribution, 1.0);
+}
+
+fragment float4 bloom_blur_fragment(PostOut in [[stage_in]],
+                                    constant float4 &p [[buffer(0)]],
+                                    texture2d<float> src [[texture(0)]],
+                                    sampler samp [[sampler(0)]]) {
+    // Nine-tap Gaussian, separable — p.zw carries the axis this pass walks,
+    // so one shader serves both the horizontal and the vertical half.
+    const float weight[5] = { 0.2270270270, 0.1945945946, 0.1216216216,
+                              0.0540540541, 0.0162162162 };
+    float2 step = p.zw;
+    float3 sum = src.sample(samp, in.uv).rgb * weight[0];
+    for (int i = 1; i < 5; ++i) {
+        float2 offset = step * float(i);
+        sum += src.sample(samp, in.uv + offset).rgb * weight[i];
+        sum += src.sample(samp, in.uv - offset).rgb * weight[i];
+    }
+    return float4(sum, 1.0);
+}
+
+/* x = bloom intensity, y = AO strength, z/w spare. */
+
+fragment float4 composite_fragment(PostOut in [[stage_in]],
+                                   constant float4 &p [[buffer(0)]],
+                                   texture2d<float> sceneTex [[texture(0)]],
+                                   texture2d<float> bloomTex [[texture(1)]],
+                                   texture2d<float> aoTex [[texture(2)]],
+                                   sampler samp [[sampler(0)]]) {
+    float3 color = sceneTex.sample(samp, in.uv).rgb;
+
+    // Ambient occlusion multiplies before the tone-map, in linear light, which
+    // is where occlusion physically belongs — applying it after the curve
+    // crushes shadowed corners to mud instead of darkening them.
+    float ao = aoTex.sample(samp, in.uv).r;
+    ao = mix(1.0, ao, clamp(p.y, 0.0, 1.0));
+    color *= ao;
+
+    // Bloom is added after AO: a glow is light arriving at the lens, not light
+    // leaving the surface, so occlusion has no business dimming it.
+    color += bloomTex.sample(samp, in.uv).rgb * p.x;
+
+    return float4(acesFilm(color), 1.0);
 }
