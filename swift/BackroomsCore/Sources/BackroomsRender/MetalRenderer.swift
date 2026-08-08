@@ -3,6 +3,7 @@ import Metal
 import Foundation
 import CoreGraphics
 import Dispatch
+import simd
 import BackroomsCore
 
 /// The native forward renderer.
@@ -50,8 +51,13 @@ public final class MetalRenderer {
     private var brightPipeline: MTLRenderPipelineState?
     private var blurPipeline: MTLRenderPipelineState?
     private var compositePipeline: MTLRenderPipelineState?
+    private var ssaoPipeline: MTLRenderPipelineState?
+    private var volumePipeline: MTLRenderPipelineState?
     private var depthState: MTLDepthStencilState?
     private var samplerState: MTLSamplerState?
+    /// Depth cannot be linearly filtered on every GPU, and the screen-space
+    /// passes want the exact stored value anyway.
+    private var depthSampler: MTLSamplerState?
 
     /// Linear light, so a fluorescent tube can read well above 1.0 instead of
     /// clipping to the same white as a sheet of paper.
@@ -61,6 +67,19 @@ public final class MetalRenderer {
     private static let bloomDivisor = 4
     private static let bloomThreshold: Float = 1.0
     private static let bloomIntensity: Float = 0.55
+    /// A single occlusion channel is all the composite reads.
+    static let occlusionFormat: MTLPixelFormat = .r8Unorm
+    /// SSAO and volumetrics both run at half res and are read back with a
+    /// linear filter, which doubles as their blur.
+    private static let screenSpaceDivisor = 2
+    /// Metres. Roughly a doorway's width — wide enough to darken a room corner,
+    /// tight enough not to shade a whole wall from the one opposite.
+    private static let ssaoRadius: Float = 1.1
+    private static let ssaoStrength: Float = 0.85
+    /// Inscatter per metre, and how far down a sightline it is worth marching.
+    private static let volumeDensity: Float = 0.02
+    private static let volumeRange: Float = 22
+    private static let volumeIntensity: Float = 1.0
     /// Clamped and unfiltered-at-edges, so the tape's horizontal smear cannot
     /// wrap colour from the opposite side of the picture.
     private var postSampler: MTLSamplerState?
@@ -74,9 +93,14 @@ public final class MetalRenderer {
     private var bloomA: MTLTexture?
     private var bloomB: MTLTexture?
     private var compositeTexture: MTLTexture?
-    /// Stands in for the occlusion buffer until SSAO exists, so the composite
-    /// shader has one code path rather than a branch on a missing texture.
+    /// Occlusion and inscatter, both half res.
+    private var ssaoTexture: MTLTexture?
+    private var volumeTexture: MTLTexture?
+    /// Neutral stand-ins so the composite shader has one code path rather than
+    /// a branch on a missing texture: white reads as "nothing occluded", black
+    /// as "nothing scattered".
     private var whiteTexture: MTLTexture?
+    private var blackTexture: MTLTexture?
     private var offscreenSize: (width: Int, height: Int) = (0, 0)
     private var offscreenColorFormat: MTLPixelFormat = .bgra8Unorm
     private var offscreenDepthFormat: MTLPixelFormat = .depth32Float
@@ -185,6 +209,8 @@ public final class MetalRenderer {
             brightPipeline = try makePost("bloom_bright_fragment", MetalRenderer.hdrFormat)
             blurPipeline = try makePost("bloom_blur_fragment", MetalRenderer.hdrFormat)
             compositePipeline = try makePost("composite_fragment", colorFormat)
+            ssaoPipeline = try makePost("ssao_fragment", MetalRenderer.occlusionFormat)
+            volumePipeline = try makePost("volumetric_fragment", MetalRenderer.hdrFormat)
         }
 
         offscreenColorFormat = MetalRenderer.hdrFormat
@@ -214,6 +240,13 @@ public final class MetalRenderer {
         postSampDesc.tAddressMode = .clampToEdge
         postSampler = device.makeSamplerState(descriptor: postSampDesc)
 
+        let depthSampDesc = MTLSamplerDescriptor()
+        depthSampDesc.minFilter = .nearest
+        depthSampDesc.magFilter = .nearest
+        depthSampDesc.sAddressMode = .clampToEdge
+        depthSampDesc.tAddressMode = .clampToEdge
+        depthSampler = device.makeSamplerState(descriptor: depthSampDesc)
+
         fallbackTexture = makeSolidTexture(r: 186, g: 174, b: 128)
         entityTexture = makeSolidTexture(r: 26, g: 24, b: 24)
         markerTexture = makeSolidTexture(r: 232, g: 224, b: 196)
@@ -221,6 +254,7 @@ public final class MetalRenderer {
         flatNormalTexture = makeSolidTexture(r: 128, g: 128, b: 255)
         flatRoughTexture = makeSolidTexture(r: 235, g: 235, b: 235)
         whiteTexture = makeSolidTexture(r: 255, g: 255, b: 255)
+        blackTexture = makeSolidTexture(r: 0, g: 0, b: 0)
 
         dynamicBuffers = (0..<MetalRenderer.framesInFlight).compactMap { _ in
             device.makeBuffer(length: MetalRenderer.dynamicCapacityFloats * MemoryLayout<Float>.size,
@@ -513,16 +547,54 @@ public final class MetalRenderer {
             let bloomW = Float(bloomA.width), bloomH = Float(bloomA.height)
             fullscreenPass(commandBuffer, pipeline: brightPipeline, into: bloomA,
                            textures: [sceneColor],
-                           params: SIMD4<Float>(MetalRenderer.bloomThreshold, 0, 0, 0))
+                           floats: [MetalRenderer.bloomThreshold, 0, 0, 0])
             fullscreenPass(commandBuffer, pipeline: blurPipeline, into: bloomB,
                            textures: [bloomA],
-                           params: SIMD4<Float>(0, 0, 1.0 / max(bloomW, 1), 0))
+                           floats: [0, 0, 1.0 / max(bloomW, 1), 0])
             fullscreenPass(commandBuffer, pipeline: blurPipeline, into: bloomA,
                            textures: [bloomB],
-                           params: SIMD4<Float>(0, 0, 0, 1.0 / max(bloomH, 1)))
+                           floats: [0, 0, 0, 1.0 / max(bloomH, 1)])
+
+            // Both screen-space passes un-project the depth buffer, so they
+            // need clip→world and world→clip. `simd_inverse` is exact enough
+            // here and beats threading a second matrix down from the camera.
+            var post = PostUniforms()
+            post.viewProjection = uniforms.viewProjection
+            post.invViewProjection = simd_inverse(uniforms.viewProjection)
+            post.camera = uniforms.cameraPos
+
+            var aoInput = whiteTexture
+            var aoStrength: Float = 0
+            if let ssaoPipeline, let ssaoTexture {
+                post.params = SIMD4<Float>(MetalRenderer.ssaoRadius,
+                                           MetalRenderer.ssaoStrength,
+                                           1.0 / Float(max(ssaoTexture.width, 1)),
+                                           1.0 / Float(max(ssaoTexture.height, 1)))
+                fullscreenPass(commandBuffer, pipeline: ssaoPipeline, into: ssaoTexture,
+                               textures: [sceneDepth],
+                               floats: post.packed(),
+                               sampler: depthSampler)
+                aoInput = ssaoTexture
+                aoStrength = 1
+            }
+
+            var volumeInput: MTLTexture? = nil
+            if let volumePipeline, let volumeTexture {
+                post.params = SIMD4<Float>(MetalRenderer.volumeDensity, 0,
+                                           MetalRenderer.volumeRange, 0)
+                fullscreenPass(commandBuffer, pipeline: volumePipeline, into: volumeTexture,
+                               textures: [sceneDepth],
+                               floats: post.packed(),
+                               sceneBuffer: packed,
+                               sampler: depthSampler)
+                volumeInput = volumeTexture
+            }
+
             fullscreenPass(commandBuffer, pipeline: compositePipeline, into: compositeTexture,
-                           textures: [sceneColor, bloomA, whiteTexture],
-                           params: SIMD4<Float>(MetalRenderer.bloomIntensity, 0, 0, 0))
+                           textures: [sceneColor, bloomA, aoInput,
+                                      volumeInput ?? blackTexture],
+                           floats: [MetalRenderer.bloomIntensity, aoStrength,
+                                    volumeInput == nil ? 0 : MetalRenderer.volumeIntensity, 0])
         }
 
         if useTape, var tapeUniforms = tape,
@@ -551,7 +623,9 @@ public final class MetalRenderer {
                                 pipeline: MTLRenderPipelineState,
                                 into target: MTLTexture,
                                 textures: [MTLTexture?],
-                                params: SIMD4<Float>) {
+                                floats: [Float],
+                                sceneBuffer: [Float]? = nil,
+                                sampler: MTLSamplerState? = nil) {
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = target
         // Nothing is read before it is written and the triangle covers every
@@ -560,12 +634,15 @@ public final class MetalRenderer {
         pass.colorAttachments[0].storeAction = .store
         guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
         encoder.setRenderPipelineState(pipeline)
-        var p = params
-        encoder.setFragmentBytes(&p, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
+        var p = floats
+        encoder.setFragmentBytes(&p, length: p.count * MemoryLayout<Float>.size, index: 0)
+        if var scene = sceneBuffer {
+            encoder.setFragmentBytes(&scene, length: scene.count * MemoryLayout<Float>.size, index: 1)
+        }
         for (index, texture) in textures.enumerated() {
             encoder.setFragmentTexture(texture, index: index)
         }
-        if let postSampler { encoder.setFragmentSamplerState(postSampler, index: 0) }
+        encoder.setFragmentSamplerState(sampler ?? postSampler, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         encoder.endEncoding()
     }
@@ -581,7 +658,9 @@ public final class MetalRenderer {
             colorDesc.storageMode = .private
             let depthDesc = MTLTextureDescriptor.texture2DDescriptor(
                 pixelFormat: offscreenDepthFormat, width: width, height: height, mipmapped: false)
-            depthDesc.usage = [.renderTarget]
+            // SSAO and the volumetrics read this back, so it can no longer be
+            // a write-only attachment.
+            depthDesc.usage = [.renderTarget, .shaderRead]
             depthDesc.storageMode = .private
             guard let color = device.makeTexture(descriptor: colorDesc),
                   let depth = device.makeTexture(descriptor: depthDesc) else { return nil }
@@ -604,6 +683,23 @@ public final class MetalRenderer {
             compositeDesc.storageMode = .private
             compositeTexture = device.makeTexture(descriptor: compositeDesc)
 
+            // Occlusion and inscatter, half res.
+            let halfW = max(1, width / MetalRenderer.screenSpaceDivisor)
+            let halfH = max(1, height / MetalRenderer.screenSpaceDivisor)
+            let ssaoDesc = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: MetalRenderer.occlusionFormat,
+                width: halfW, height: halfH, mipmapped: false)
+            ssaoDesc.usage = [.renderTarget, .shaderRead]
+            ssaoDesc.storageMode = .private
+            ssaoTexture = device.makeTexture(descriptor: ssaoDesc)
+
+            let volumeDesc = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: MetalRenderer.hdrFormat,
+                width: halfW, height: halfH, mipmapped: false)
+            volumeDesc.usage = [.renderTarget, .shaderRead]
+            volumeDesc.storageMode = .private
+            volumeTexture = device.makeTexture(descriptor: volumeDesc)
+
             offscreenSize = (width, height)
         }
         guard let sceneColor, let sceneDepth else { return nil }
@@ -615,7 +711,10 @@ public final class MetalRenderer {
         pass.colorAttachments[0].clearColor = clearColor
         pass.depthAttachment.texture = sceneDepth
         pass.depthAttachment.loadAction = .clear
-        pass.depthAttachment.storeAction = .dontCare
+        // Was `.dontCare` when nothing read depth back. SSAO and the
+        // volumetrics both un-project it after the pass ends, so discarding it
+        // here would hand them undefined contents.
+        pass.depthAttachment.storeAction = .store
         pass.depthAttachment.clearDepth = 1.0
         return pass
     }

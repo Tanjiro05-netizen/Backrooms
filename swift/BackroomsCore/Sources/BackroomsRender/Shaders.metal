@@ -439,13 +439,14 @@ fragment float4 bloom_blur_fragment(PostOut in [[stage_in]],
     return float4(sum, 1.0);
 }
 
-/* x = bloom intensity, y = AO strength, z/w spare. */
+/* x = bloom intensity, y = AO strength, z = volumetric intensity, w spare. */
 
 fragment float4 composite_fragment(PostOut in [[stage_in]],
                                    constant float4 &p [[buffer(0)]],
                                    texture2d<float> sceneTex [[texture(0)]],
                                    texture2d<float> bloomTex [[texture(1)]],
                                    texture2d<float> aoTex [[texture(2)]],
+                                   texture2d<float> volumeTex [[texture(3)]],
                                    sampler samp [[sampler(0)]]) {
     float3 color = sceneTex.sample(samp, in.uv).rgb;
 
@@ -456,9 +457,151 @@ fragment float4 composite_fragment(PostOut in [[stage_in]],
     ao = mix(1.0, ao, clamp(p.y, 0.0, 1.0));
     color *= ao;
 
-    // Bloom is added after AO: a glow is light arriving at the lens, not light
-    // leaving the surface, so occlusion has no business dimming it.
+    // Bloom and inscatter are both added after AO: they are light arriving at
+    // the lens, not light leaving the surface, so occlusion has no business
+    // dimming them. Both are sampled from half/quarter-res targets, and the
+    // linear filter doing the upsample is also what softens them.
     color += bloomTex.sample(samp, in.uv).rgb * p.x;
+    color += volumeTex.sample(samp, in.uv).rgb * p.z;
 
     return float4(acesFilm(color), 1.0);
+}
+
+/* =========================================================
+   SCREEN SPACE — occlusion and volumetrics
+
+   Both passes rebuild a world position from the depth buffer, so they share
+   the same uniforms. Both run at half resolution and are sampled back with a
+   linear filter, which is its own cheap blur — AO and god rays are both
+   low-frequency, and the tape grain covers what the upsample softens.
+   ========================================================= */
+
+struct PostUniforms {
+    float4x4 invViewProjection;
+    float4x4 viewProjection;
+    float4 params;
+    float4 camera;
+};
+
+static inline float3 worldFromDepth(float2 uv, float depth, float4x4 invVP) {
+    // Metal clip space: xy in [-1,1], z in [0,1]. `uv` is the y-up coordinate
+    // the fullscreen triangle hands down, matching the tape pass.
+    float4 ndc = float4(uv.x * 2.0 - 1.0, uv.y * 2.0 - 1.0, depth, 1.0);
+    float4 world = invVP * ndc;
+    return world.xyz / (abs(world.w) < 1e-6 ? 1e-6 : world.w);
+}
+
+static inline float postHash(float2 p) {
+    return fract(sin(dot(p, float2(12.9898, 78.233))) * 43758.5453);
+}
+
+/* Hemisphere SSAO. The normal comes from the derivatives of the reconstructed
+   position rather than a G-buffer: this is a forward renderer with no normal
+   target, and screen-space derivatives are exact enough for an effect that is
+   then blurred by its own upsample. */
+fragment float4 ssao_fragment(PostOut in [[stage_in]],
+                              constant PostUniforms &u [[buffer(0)]],
+                              depth2d<float> depthTex [[texture(0)]],
+                              sampler samp [[sampler(0)]]) {
+    float d = depthTex.sample(samp, in.uv);
+    // Nothing was drawn here — the far plane is not occluded by anything.
+    if (d >= 1.0) return float4(1.0, 1.0, 1.0, 1.0);
+
+    float3 P = worldFromDepth(in.uv, d, u.invViewProjection);
+    float3 N = normalize(cross(dfdx(P), dfdy(P)));
+
+    float radius = max(u.params.x, 1e-3);
+    float3 T = normalize(abs(N.y) < 0.9 ? cross(float3(0.0, 1.0, 0.0), N)
+                                        : cross(float3(1.0, 0.0, 0.0), N));
+    float3 B = cross(N, T);
+
+    const int SAMPLES = 12;
+    float angle = postHash(in.uv) * 6.2831853;
+    float occlusion = 0.0;
+
+    for (int i = 0; i < SAMPLES; ++i) {
+        float t = (float(i) + 0.5) / float(SAMPLES);
+        // Golden-angle spiral: even coverage without a noise texture, and the
+        // per-pixel rotation turns the banding it would otherwise show into
+        // dither that the upsample smooths out.
+        float phi = 2.3999632 * float(i) + angle;
+        float r = radius * sqrt(t);
+        float3 samplePos = P + (T * cos(phi) + B * sin(phi)) * r
+                             + N * (radius * 0.35 * t);
+
+        float4 clip = u.viewProjection * float4(samplePos, 1.0);
+        if (clip.w <= 0.0) continue;
+        float2 sUv = (clip.xy / clip.w) * 0.5 + 0.5;
+        if (sUv.x < 0.0 || sUv.x > 1.0 || sUv.y < 0.0 || sUv.y > 1.0) continue;
+
+        float sampleDepth = depthTex.sample(samp, sUv);
+        if (sampleDepth >= 1.0) continue;
+        float3 occluder = worldFromDepth(sUv, sampleDepth, u.invViewProjection);
+
+        float3 delta = occluder - P;
+        float along = dot(delta, N);
+        float dist = length(delta);
+        // `along > bias` keeps a surface from occluding itself; the range check
+        // stops a distant wall behind a doorway from darkening the doorway.
+        if (along > 0.02 && dist < radius * 1.5) {
+            occlusion += smoothstep(1.0, 0.0, dist / (radius * 1.5));
+        }
+    }
+
+    float ao = 1.0 - (occlusion / float(SAMPLES)) * u.params.y;
+    return float4(clamp(ao, 0.0, 1.0), 0.0, 0.0, 1.0);
+}
+
+/* Volumetric inscatter. Marches camera → surface accumulating light that
+   reaches each step, which is what makes the air in a lit room visible and
+   gives the camcorder lamp a beam instead of a pool on the far wall. */
+fragment float4 volumetric_fragment(PostOut in [[stage_in]],
+                                    constant PostUniforms &u [[buffer(0)]],
+                                    constant SceneUniforms &s [[buffer(1)]],
+                                    depth2d<float> depthTex [[texture(0)]],
+                                    sampler samp [[sampler(0)]]) {
+    float d = depthTex.sample(samp, in.uv);
+    float3 P = worldFromDepth(in.uv, min(d, 0.99999), u.invViewProjection);
+    float3 camera = u.camera.xyz;
+    float3 ray = P - camera;
+    float rayLength = length(ray);
+    if (rayLength < 1e-3) return float4(0.0, 0.0, 0.0, 1.0);
+    float3 dir = ray / rayLength;
+
+    // Capped, because a corridor sightline can run the length of the floor and
+    // the far half contributes almost nothing at this density.
+    float marchLength = min(rayLength, u.params.z);
+    const int STEPS = 16;
+    float stepLength = marchLength / float(STEPS);
+    // Jitter the start so the 16 steps do not band into visible shells.
+    float jitter = postHash(in.uv * 3.7);
+
+    float3 accum = float3(0.0);
+    int lightCount = min(int(s.misc.x), 4);   // the four the ranker put first
+
+    for (int i = 0; i < STEPS; ++i) {
+        float3 sp = camera + dir * ((float(i) + jitter) * stepLength);
+
+        if (s.flash.w > 0.0) {
+            float3 toC = camera - sp;
+            float dl = length(toC);
+            float3 L = toC / max(dl, 1e-4);
+            float spot = dot(-L, normalize(s.cameraForward.xyz));
+            float cone = smoothstep(s.flashParams.y, s.flashParams.x, spot);
+            float atten = clamp(1.0 - dl / s.flashParams.z, 0.0, 1.0);
+            accum += s.flash.rgb * (s.flash.w * cone * atten * atten);
+        }
+
+        for (int j = 0; j < lightCount; ++j) {
+            float3 toL = s.pointLights[j].positionRange.xyz - sp;
+            float range = s.pointLights[j].positionRange.w;
+            float dl = length(toL);
+            if (dl > range) continue;
+            float atten = clamp(1.0 - dl / range, 0.0, 1.0);
+            accum += s.pointLights[j].colorIntensity.rgb
+                   * (s.pointLights[j].colorIntensity.w * atten * atten);
+        }
+    }
+
+    return float4(accum * stepLength * u.params.x, 1.0);
 }
