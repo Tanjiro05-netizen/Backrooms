@@ -73,6 +73,11 @@ public final class GameSession {
     public private(set) var difficulty: Difficulty
     public private(set) var map: GameMap
     public private(set) var geometry: LevelGeometry
+    /// Per-theme set dressing — crates, pipework, troffers, pool furniture.
+    /// Built once with the floor and reused: it is seeded off the map, so it
+    /// does not change when a tape is taken, and regenerating it on every
+    /// pickup would rebuild ~20k triangles for nothing.
+    private var dressing: PropMesh.Dressing?
     public private(set) var player: PlayerSim
     public private(set) var camera = Camera()
     /// The entity's whole state machine — idle, watching you, or hunting.
@@ -176,6 +181,7 @@ public final class GameSession {
         let spec = LevelSpec.standardLevels[idx]
         self.map = GameMap.generate(spec: spec, levelIndex: idx)
         self.geometry = LevelGeometry.build(map: self.map)
+        self.dressing = PropMesh.dressing(map: self.map)
         self.player = PlayerSim(map: self.map, colliders: self.geometry.colliderBuckets)
         self.environment = Environment.forTheme(spec.theme)
         self.rng = Mulberry32(seed: LevelSpec.seed(forLevel: idx) &+ 991)
@@ -210,8 +216,10 @@ public final class GameSession {
             currentMap.groundHeight(atX: x, z: z)
         }
         renderer.updateProps(in: &scene,
-                             dark: PropMesh.dark(tapes: tapes, exit: exit, groundY: ground),
-                             bright: PropMesh.bright(tapes: tapes, exit: exit, groundY: ground))
+                             dark: PropMesh.dark(tapes: tapes, exit: exit,
+                                                 dressing: dressing, groundY: ground),
+                             bright: PropMesh.bright(tapes: tapes, exit: exit,
+                                                     dressing: dressing, groundY: ground))
         self.scene = scene
     }
 
@@ -222,6 +230,7 @@ public final class GameSession {
         let spec = LevelSpec.standardLevels[clamped]
         map = GameMap.generate(spec: spec, levelIndex: clamped)
         geometry = LevelGeometry.build(map: map)
+        dressing = PropMesh.dressing(map: map)
         player = PlayerSim(map: map, colliders: geometry.colliderBuckets)
         environment = Environment.forTheme(spec.theme)
         rng = Mulberry32(seed: LevelSpec.seed(forLevel: clamped) &+ 991)
