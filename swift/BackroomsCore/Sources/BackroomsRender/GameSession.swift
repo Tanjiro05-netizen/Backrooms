@@ -68,6 +68,9 @@ public final class GameSession {
     }
 
     public private(set) var levelIndex: Int
+    /// Chosen once at the start of a run and carried down every floor, so the
+    /// rules cannot change under you between levels.
+    public private(set) var difficulty: Difficulty
     public private(set) var map: GameMap
     public private(set) var geometry: LevelGeometry
     public private(set) var player: PlayerSim
@@ -165,9 +168,11 @@ public final class GameSession {
     /// one system silently move another.
     private var objectiveRng: Mulberry32
 
-    public init(levelIndex: Int = 0, renderer: MetalRenderer? = nil) {
+    public init(levelIndex: Int = 0, renderer: MetalRenderer? = nil,
+                difficulty: Difficulty = .standard) {
         let idx = max(0, min(LevelSpec.standardLevels.count - 1, levelIndex))
         self.levelIndex = idx
+        self.difficulty = difficulty
         let spec = LevelSpec.standardLevels[idx]
         self.map = GameMap.generate(spec: spec, levelIndex: idx)
         self.geometry = LevelGeometry.build(map: self.map)
@@ -176,7 +181,8 @@ public final class GameSession {
         self.rng = Mulberry32(seed: LevelSpec.seed(forLevel: idx) &+ 991)
         self.objectiveRng = Mulberry32(seed: LevelSpec.seed(forLevel: idx) &+ 5387)
         self.presence = EntityPresence(def: EntityDef.byLevel[idx], map: self.map,
-                                       seed: LevelSpec.seed(forLevel: idx))
+                                       seed: LevelSpec.seed(forLevel: idx),
+                                       difficulty: difficulty.entity)
         applyEnvironment()
         placeObjectives()
         // Seed the footfall pacer at spawn, or the first frame reads the whole
@@ -221,7 +227,8 @@ public final class GameSession {
         rng = Mulberry32(seed: LevelSpec.seed(forLevel: clamped) &+ 991)
         objectiveRng = Mulberry32(seed: LevelSpec.seed(forLevel: clamped) &+ 5387)
         presence = EntityPresence(def: EntityDef.byLevel[clamped], map: map,
-                                  seed: LevelSpec.seed(forLevel: clamped))
+                                  seed: LevelSpec.seed(forLevel: clamped),
+                                  difficulty: difficulty.entity)
         entityEvents = []
         pitch = 0
         health = 100
@@ -498,6 +505,37 @@ public final class GameSession {
         guard let h = hunter else { return nil }
         let dx = h.x - player.x, dz = h.z - player.z
         return (dx * dx + dz * dz).squareRoot()
+    }
+
+    /// Straight-line distance to the exit, or nil before one is placed.
+    public var exitDistance: Double? {
+        guard let exit else { return nil }
+        let dx = exit.x - player.x, dz = exit.z - player.z
+        return (dx * dx + dz * dz).squareRoot()
+    }
+
+    /// The closest tape still out there on this floor, with its distance.
+    /// Only meaningful under a difficulty that advertises tapes — the caller
+    /// decides that, since the nearest tape is also useful to the audio.
+    public var nearestUnfoundTape: (tape: Objectives.Tape, distance: Double)? {
+        var best: (Objectives.Tape, Double)?
+        for t in tapes where !t.found {
+            let dx = t.x - player.x, dz = t.z - player.z
+            let d = (dx * dx + dz * dz).squareRoot()
+            if best == nil || d < best!.1 { best = (t, d) }
+        }
+        guard let best else { return nil }
+        return (tape: best.0, distance: best.1)
+    }
+
+    /// Screen-space bearing to a world point, in radians, ready to drop into a
+    /// rotation transform: 0 means dead ahead, positive turns clockwise.
+    ///
+    /// This is the web build's arrow math — `atan2(dx, dz) - (yaw + π)`, negated
+    /// — kept in the session so both the compass arrows and anything else that
+    /// wants a heading agree by construction.
+    public func bearing(toX x: Double, z: Double) -> Double {
+        -(atan2(x - player.x, z - player.z) - (player.yaw + Double.pi))
     }
 
     /// Distance to the entity in whatever state it is in, or nil while idle.

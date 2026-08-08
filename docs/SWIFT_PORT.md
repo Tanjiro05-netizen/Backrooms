@@ -65,7 +65,9 @@ Compile Sources entry is what makes the app not depend on that lookup working.
 | Camera / matrix math (`Mat4`, `Camera`) | ✅ BackroomsCore | ✅ view+proj vs Three.js, exact | YXZ euler + GL and Metal depth conventions |
 | **Renderer (Metal)** | 🟡 BackroomsRender | ✅ layout/mesh/light tests | forward pass, uniforms, mesh upload, per-frame entity mesh, albedo/normal/roughness materials with mips |
 | Game loop (`GameSession`) | ✅ BackroomsRender | ✅ hunt/death/restart/bounds | fixed 1/60 accumulator over map+player+hunter+camera |
-| **Native app target** | ✅ `ios/BackroomsNative` | ✅ builds in CI | `MTKView`, virtual stick + drag look, HUD, USE prompt, floor cards, death/rewind, win screen |
+| **Native app target** | ✅ `ios/BackroomsNative` | ✅ builds in CI | `MTKView`, virtual stick + drag look, OSD, USE prompt, floor cards, death/rewind, win screen, start menu + pause/quit, IR nightshot toggle, compass arrows |
+| Difficulty (`DIFFS`) | ✅ BackroomsCore | ✅ via existing presence tests | `EntityDifficulty` multipliers were already threaded through `EntityPresence`; `Difficulty` adds the run-level rules (`beaconAlways`, `tapeHints`) and the menu picks it. STANDARD is all-1.0, so fixtures are unaffected |
+| On-screen wayfinding | 🟡 arrows done | — | tape + exit compass arrows and bearings, ported from the web arrow math. The *wall* arrows (`buildWallArrows`, spray-painted trail toward the door) are still 3D geometry work and not started |
 | Audio (AVAudioEngine) | ✅ BackroomsCore + Render | ✅ filter response, envelopes, every sound audible + bounded | procedural: no audio files exist in this project. Biquad/Envelope/Voice/AudioMixer are pure; AudioHost is one AVAudioSourceNode |
 | Input (touch/gyro) | 🟡 touch done | — | gyro still to come; reuse shell's Core Motion work |
 | VHS post chain (MSL) | ✅ BackroomsRender | ✅ uniform layout + state response | analog tape model — chroma bandwidth, time-base error, head switching; offscreen target + resolve pass |

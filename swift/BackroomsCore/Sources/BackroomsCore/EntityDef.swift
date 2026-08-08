@@ -84,7 +84,7 @@ public struct EntityDef: Sendable {
 /// The difficulty multipliers the entity reads, from the web build's `DIFFS`.
 /// Only the entity-facing fields are here; player drain and damage live with
 /// the player.
-public struct EntityDifficulty: Sendable {
+public struct EntityDifficulty: Sendable, Equatable {
     public var hunt: Double        // scales the gap between hunts
     public var sight: Double       // scales the gap between sightings
     public var speed: Double       // chase speed

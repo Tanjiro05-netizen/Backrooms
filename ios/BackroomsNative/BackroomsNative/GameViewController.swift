@@ -28,6 +28,14 @@ final class GameViewController: UIViewController, MTKViewDelegate {
     private let stickRadius: CGFloat = 90
     private let lookSensitivity: Double = 0.005
 
+    /// Chosen on the menu, carried into every `GameSession` the run creates.
+    private var chosenDifficulty: Difficulty = .standard
+    /// IR nightshot. The shader has always supported it; this is the switch.
+    private var nightVision = false
+    /// True while the pause overlay is up — the world stops stepping but keeps
+    /// drawing, so pausing does not black out the picture.
+    private var isPaused = false
+
     private var hud: UILabel!
     private var stickView: UIView!
     private var knobView: UIView!
@@ -39,6 +47,27 @@ final class GameViewController: UIViewController, MTKViewDelegate {
     private var promptButton: UIButton!
     private var messageLabel: UILabel!
     private var cardAgainButton: UIButton!
+
+    // OSD
+    private var recDot: UIView!
+    private var nvLabel: UILabel!
+    private var rightOSD: UILabel!
+    private var threatLabel: UILabel!
+    private var vitalsTrack: UIView!
+    private var vitalsFill: UIView!
+    private var staminaTrack: UIView!
+    private var staminaFill: UIView!
+    private var exitArrow: ArrowView!
+    private var tapeArrow: ArrowView!
+
+    // Menu / pause
+    private var menuView: UIView!
+    private var pauseView: UIView!
+    private var pauseButton: UIButton!
+    private var lampButton: UIButton!
+    private var nvButton: UIButton!
+    private var difficultyButtons: [UIButton] = []
+
     /// Set while the next floor is being generated, so the cut only fires once.
     private var buildingNextFloor = false
 
@@ -71,7 +100,110 @@ final class GameViewController: UIViewController, MTKViewDelegate {
         }
 
         buildOverlay()
-        loadLevel(0)
+        buildMenu()
+        buildPauseOverlay()
+        showMenu()
+    }
+
+    // MARK: - Run lifecycle
+
+    private func showMenu() {
+        session = nil
+        isPaused = false
+        // With no session, `draw` returns before it feeds the mixer — so the
+        // drone and water beds would hold their last level under the menu
+        // forever. Silence them on the way out.
+        audio?.update { mixer in
+            mixer.waterLevel = 0
+            mixer.breathLevel = 0
+            mixer.droneLevel = 0
+        }
+        buildingNextFloor = false
+        menuView.isHidden = false
+        pauseView.isHidden = true
+        cardView.isHidden = true
+        deathView.isHidden = true
+        loadingView.isHidden = true
+        setPlayChromeHidden(true)
+    }
+
+    /// Hides everything that only makes sense mid-run, so the menu is not
+    /// showing a HUD for a session that does not exist yet.
+    private func setPlayChromeHidden(_ hidden: Bool) {
+        hud.isHidden = hidden
+        recDot.isHidden = hidden
+        rightOSD.isHidden = hidden
+        threatLabel.isHidden = hidden
+        vitalsTrack.isHidden = hidden
+        vitalsFill.isHidden = hidden
+        staminaTrack.isHidden = hidden
+        staminaFill.isHidden = hidden
+        lampButton.isHidden = hidden
+        nvButton.isHidden = hidden
+        pauseButton.isHidden = hidden
+        if hidden {
+            exitArrow.isHidden = true
+            tapeArrow.isHidden = true
+            nvLabel.isHidden = true
+            promptButton.isHidden = true
+            messageLabel.text = nil
+            stickView.alpha = 0
+            knobView.alpha = 0
+        }
+    }
+
+    @objc private func startRun() {
+        menuView.isHidden = true
+        nightVision = false
+        nvButton.layer.borderColor = UIColor(white: 1, alpha: 0.25).cgColor
+        setPlayChromeHidden(false)
+        loadLevel(0, resettingRun: true)
+    }
+
+    @objc private func pickDifficulty(_ sender: UIButton) {
+        guard sender.tag >= 0 && sender.tag < Difficulty.all.count else { return }
+        chosenDifficulty = Difficulty.all[sender.tag]
+        refreshDifficultyButtons()
+    }
+
+    private func refreshDifficultyButtons() {
+        for button in difficultyButtons {
+            let picked = button.tag < Difficulty.all.count
+                && Difficulty.all[button.tag].id == chosenDifficulty.id
+            button.layer.borderColor = picked
+                ? UIColor(red: 0.55, green: 1, blue: 0.75, alpha: 0.95).cgColor
+                : UIColor(white: 1, alpha: 0.22).cgColor
+            button.layer.borderWidth = picked ? 3 : 2
+            button.tintColor = picked
+                ? UIColor(red: 0.85, green: 1, blue: 0.92, alpha: 1)
+                : UIColor(white: 0.75, alpha: 1)
+        }
+    }
+
+    @objc private func togglePause() {
+        guard session != nil, session.phase == .playing else { return }
+        isPaused = true
+        pauseView.isHidden = false
+        // Drop any held touch, or the stick stays deflected through the pause.
+        moveTouch = nil
+        lookTouch = nil
+        input.moveX = 0
+        input.moveZ = 0
+        input.run = false
+        stickView.alpha = 0
+        knobView.alpha = 0
+    }
+
+    @objc private func resumeRun() {
+        isPaused = false
+        pauseView.isHidden = true
+        // Without this the first frame back sees the whole paused wall-clock
+        // as one step and teleports everything.
+        lastFrame = CACurrentMediaTime()
+    }
+
+    @objc private func quitToMenu() {
+        showMenu()
     }
 
     /// Generating a floor means synthesising ~2M pixels of wallpaper, carpet
@@ -83,8 +215,10 @@ final class GameViewController: UIViewController, MTKViewDelegate {
         promptButton.isHidden = true
         messageLabel.text = nil
         let renderer = self.renderer!
+        let difficulty = chosenDifficulty
         DispatchQueue.global(qos: .userInitiated).async {
-            let session = GameSession(levelIndex: index, renderer: renderer)
+            let session = GameSession(levelIndex: index, renderer: renderer,
+                                      difficulty: difficulty)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.session = session
@@ -166,6 +300,31 @@ final class GameViewController: UIViewController, MTKViewDelegate {
         knobView.alpha = 0
         view.addSubview(knobView)
 
+        // The exit arrow sits above the tape arrow, matching the web build's
+        // 36% / 46% split — two arrows at the same height read as one control.
+        exitArrow = ArrowView(color: UIColor(red: 0.62, green: 1, blue: 0.71, alpha: 1))
+        exitArrow.isHidden = true
+        view.addSubview(exitArrow)
+
+        tapeArrow = ArrowView(color: UIColor(red: 1, green: 0.82, blue: 0.48, alpha: 1))
+        tapeArrow.isHidden = true
+        view.addSubview(tapeArrow)
+
+        recDot = UIView()
+        recDot.backgroundColor = UIColor(red: 1, green: 0.13, blue: 0.13, alpha: 1)
+        recDot.layer.cornerRadius = 6
+        recDot.isUserInteractionEnabled = false
+        view.addSubview(recDot)
+        // A camcorder's REC light is the one thing on screen that never stops
+        // moving, so it does the work of telling you the tape is still running.
+        let blink = CABasicAnimation(keyPath: "opacity")
+        blink.fromValue = 1.0
+        blink.toValue = 0.12
+        blink.duration = 0.6
+        blink.autoreverses = true
+        blink.repeatCount = .infinity
+        recDot.layer.add(blink, forKey: "blink")
+
         hud = UILabel()
         hud.numberOfLines = 0
         hud.textColor = UIColor(red: 0.95, green: 0.94, blue: 0.89, alpha: 1)
@@ -175,22 +334,65 @@ final class GameViewController: UIViewController, MTKViewDelegate {
         hud.isUserInteractionEnabled = false
         view.addSubview(hud)
 
-        let lamp = UIButton(type: .system)
-        lamp.setTitle("LAMP", for: .normal)
-        lamp.titleLabel?.font = .monospacedSystemFont(ofSize: 13, weight: .bold)
-        lamp.tintColor = .white
-        lamp.layer.borderWidth = 2
-        lamp.layer.borderColor = UIColor(white: 1, alpha: 0.25).cgColor
-        lamp.layer.cornerRadius = 30
-        lamp.addTarget(self, action: #selector(toggleLamp), for: .touchUpInside)
-        lamp.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(lamp)
+        rightOSD = UILabel()
+        rightOSD.numberOfLines = 0
+        rightOSD.textAlignment = .right
+        rightOSD.textColor = UIColor(red: 0.95, green: 0.94, blue: 0.89, alpha: 1)
+        rightOSD.font = .monospacedSystemFont(ofSize: 13, weight: .bold)
+        rightOSD.shadowColor = .black
+        rightOSD.shadowOffset = CGSize(width: 0, height: 1)
+        rightOSD.isUserInteractionEnabled = false
+        view.addSubview(rightOSD)
+
+        threatLabel = UILabel()
+        threatLabel.font = .monospacedSystemFont(ofSize: 13, weight: .heavy)
+        threatLabel.shadowColor = .black
+        threatLabel.shadowOffset = CGSize(width: 0, height: 1)
+        threatLabel.isUserInteractionEnabled = false
+        view.addSubview(threatLabel)
+
+        nvLabel = UILabel()
+        nvLabel.text = "◉ NIGHTSHOT"
+        nvLabel.textColor = UIColor(red: 0.49, green: 1, blue: 0.63, alpha: 1)
+        nvLabel.font = .monospacedSystemFont(ofSize: 12, weight: .bold)
+        nvLabel.shadowColor = .black
+        nvLabel.shadowOffset = CGSize(width: 0, height: 1)
+        nvLabel.isHidden = true
+        nvLabel.isUserInteractionEnabled = false
+        view.addSubview(nvLabel)
+
+        (vitalsTrack, vitalsFill) = makeBar(UIColor(red: 1, green: 0.35, blue: 0.35, alpha: 1))
+        (staminaTrack, staminaFill) = makeBar(UIColor(red: 0.95, green: 0.93, blue: 0.7, alpha: 1))
+
+        lampButton = makeRoundButton("LAMP", action: #selector(toggleLamp))
+        nvButton = makeRoundButton("NV", action: #selector(toggleNightVision))
+
+        pauseButton = UIButton(type: .system)
+        pauseButton.setTitle("❙❙", for: .normal)
+        pauseButton.titleLabel?.font = .monospacedSystemFont(ofSize: 15, weight: .bold)
+        pauseButton.tintColor = .white
+        pauseButton.layer.borderWidth = 2
+        pauseButton.layer.borderColor = UIColor(white: 1, alpha: 0.25).cgColor
+        pauseButton.layer.cornerRadius = 6
+        pauseButton.addTarget(self, action: #selector(togglePause), for: .touchUpInside)
+        pauseButton.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(pauseButton)
 
         NSLayoutConstraint.activate([
-            lamp.widthAnchor.constraint(equalToConstant: 60),
-            lamp.heightAnchor.constraint(equalToConstant: 60),
-            lamp.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -24),
-            lamp.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24)
+            lampButton.widthAnchor.constraint(equalToConstant: 60),
+            lampButton.heightAnchor.constraint(equalToConstant: 60),
+            lampButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -24),
+            lampButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
+
+            nvButton.widthAnchor.constraint(equalToConstant: 60),
+            nvButton.heightAnchor.constraint(equalToConstant: 60),
+            nvButton.trailingAnchor.constraint(equalTo: lampButton.leadingAnchor, constant: -14),
+            nvButton.bottomAnchor.constraint(equalTo: lampButton.bottomAnchor),
+
+            pauseButton.widthAnchor.constraint(equalToConstant: 46),
+            pauseButton.heightAnchor.constraint(equalToConstant: 34),
+            pauseButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -24),
+            pauseButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12)
         ])
 
         promptButton = UIButton(type: .system)
@@ -228,6 +430,172 @@ final class GameViewController: UIViewController, MTKViewDelegate {
         buildDeathOverlay()
         buildLoadingOverlay()
         buildCard()
+    }
+
+    private func makeBar(_ color: UIColor) -> (UIView, UIView) {
+        let track = UIView()
+        track.backgroundColor = UIColor(white: 1, alpha: 0.13)
+        track.layer.cornerRadius = 2
+        track.isUserInteractionEnabled = false
+        view.addSubview(track)
+
+        let fill = UIView()
+        fill.backgroundColor = color
+        fill.layer.cornerRadius = 2
+        fill.isUserInteractionEnabled = false
+        view.addSubview(fill)
+        return (track, fill)
+    }
+
+    private func makeRoundButton(_ title: String, action: Selector) -> UIButton {
+        let button = UIButton(type: .system)
+        button.setTitle(title, for: .normal)
+        button.titleLabel?.font = .monospacedSystemFont(ofSize: 13, weight: .bold)
+        button.tintColor = .white
+        button.layer.borderWidth = 2
+        button.layer.borderColor = UIColor(white: 1, alpha: 0.25).cgColor
+        button.layer.cornerRadius = 30
+        button.addTarget(self, action: action, for: .touchUpInside)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(button)
+        return button
+    }
+
+    /// The start screen. Difficulty is picked here rather than in a settings
+    /// panel because it changes what the run *is*, and the web build likewise
+    /// commits to it before the first frame.
+    private func buildMenu() {
+        menuView = UIView(frame: view.bounds)
+        menuView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        menuView.backgroundColor = .black
+        view.addSubview(menuView)
+
+        let title = UILabel()
+        title.text = "BACKROOMS"
+        title.textAlignment = .center
+        title.textColor = UIColor(red: 0.95, green: 0.94, blue: 0.89, alpha: 1)
+        title.font = .monospacedSystemFont(ofSize: 34, weight: .heavy)
+        title.translatesAutoresizingMaskIntoConstraints = false
+        menuView.addSubview(title)
+
+        let sub = UILabel()
+        sub.text = "FOUND FOOTAGE"
+        sub.textAlignment = .center
+        sub.textColor = UIColor(white: 0.5, alpha: 1)
+        sub.font = .monospacedSystemFont(ofSize: 13, weight: .semibold)
+        sub.translatesAutoresizingMaskIntoConstraints = false
+        menuView.addSubview(sub)
+
+        let row = UIStackView()
+        row.axis = .horizontal
+        row.spacing = 14
+        row.distribution = .fillEqually
+        row.translatesAutoresizingMaskIntoConstraints = false
+        menuView.addSubview(row)
+
+        for (index, difficulty) in Difficulty.all.enumerated() {
+            let button = UIButton(type: .system)
+            button.setTitle(difficulty.label, for: .normal)
+            button.titleLabel?.font = .monospacedSystemFont(ofSize: 15, weight: .bold)
+            button.layer.cornerRadius = 6
+            button.tag = index
+            button.addTarget(self, action: #selector(pickDifficulty(_:)), for: .touchUpInside)
+            row.addArrangedSubview(button)
+            difficultyButtons.append(button)
+        }
+        refreshDifficultyButtons()
+
+        let blurb = UILabel()
+        blurb.numberOfLines = 0
+        blurb.textAlignment = .center
+        blurb.textColor = UIColor(white: 0.45, alpha: 1)
+        blurb.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+        blurb.text = Difficulty.all.map { "\($0.label) — \($0.blurb)" }.joined(separator: "\n")
+        blurb.translatesAutoresizingMaskIntoConstraints = false
+        menuView.addSubview(blurb)
+
+        let play = UIButton(type: .system)
+        play.setTitle("▸ PLAY", for: .normal)
+        play.titleLabel?.font = .monospacedSystemFont(ofSize: 18, weight: .heavy)
+        play.tintColor = UIColor(red: 0.85, green: 1, blue: 0.92, alpha: 1)
+        play.layer.borderWidth = 2
+        play.layer.borderColor = UIColor(red: 0.4, green: 0.95, blue: 0.7, alpha: 0.85).cgColor
+        play.layer.cornerRadius = 6
+        play.addTarget(self, action: #selector(startRun), for: .touchUpInside)
+        play.translatesAutoresizingMaskIntoConstraints = false
+        menuView.addSubview(play)
+
+        NSLayoutConstraint.activate([
+            title.centerXAnchor.constraint(equalTo: menuView.centerXAnchor),
+            title.topAnchor.constraint(equalTo: menuView.safeAreaLayoutGuide.topAnchor, constant: 26),
+            sub.centerXAnchor.constraint(equalTo: menuView.centerXAnchor),
+            sub.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 6),
+
+            row.centerXAnchor.constraint(equalTo: menuView.centerXAnchor),
+            row.topAnchor.constraint(equalTo: sub.bottomAnchor, constant: 26),
+            row.widthAnchor.constraint(equalToConstant: 340),
+            row.heightAnchor.constraint(equalToConstant: 46),
+
+            blurb.centerXAnchor.constraint(equalTo: menuView.centerXAnchor),
+            blurb.topAnchor.constraint(equalTo: row.bottomAnchor, constant: 12),
+            blurb.widthAnchor.constraint(lessThanOrEqualTo: menuView.widthAnchor, multiplier: 0.8),
+
+            play.centerXAnchor.constraint(equalTo: menuView.centerXAnchor),
+            play.topAnchor.constraint(equalTo: blurb.bottomAnchor, constant: 22),
+            play.widthAnchor.constraint(equalToConstant: 200),
+            play.heightAnchor.constraint(equalToConstant: 52)
+        ])
+    }
+
+    private func buildPauseOverlay() {
+        pauseView = UIView(frame: view.bounds)
+        pauseView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        pauseView.backgroundColor = UIColor(white: 0, alpha: 0.78)
+        pauseView.isHidden = true
+        view.addSubview(pauseView)
+
+        let title = UILabel()
+        title.text = "▮▮ PAUSED"
+        title.textAlignment = .center
+        title.textColor = UIColor(red: 0.95, green: 0.94, blue: 0.89, alpha: 1)
+        title.font = .monospacedSystemFont(ofSize: 24, weight: .heavy)
+        title.translatesAutoresizingMaskIntoConstraints = false
+        pauseView.addSubview(title)
+
+        let resume = UIButton(type: .system)
+        resume.setTitle("RESUME", for: .normal)
+        resume.titleLabel?.font = .monospacedSystemFont(ofSize: 16, weight: .bold)
+        resume.tintColor = UIColor(red: 0.85, green: 1, blue: 0.92, alpha: 1)
+        resume.layer.borderWidth = 2
+        resume.layer.borderColor = UIColor(red: 0.4, green: 0.95, blue: 0.7, alpha: 0.85).cgColor
+        resume.layer.cornerRadius = 6
+        resume.addTarget(self, action: #selector(resumeRun), for: .touchUpInside)
+        resume.translatesAutoresizingMaskIntoConstraints = false
+        pauseView.addSubview(resume)
+
+        let quit = UIButton(type: .system)
+        quit.setTitle("QUIT TO MENU", for: .normal)
+        quit.titleLabel?.font = .monospacedSystemFont(ofSize: 15, weight: .bold)
+        quit.tintColor = UIColor(white: 0.72, alpha: 1)
+        quit.layer.borderWidth = 2
+        quit.layer.borderColor = UIColor(white: 1, alpha: 0.3).cgColor
+        quit.layer.cornerRadius = 6
+        quit.addTarget(self, action: #selector(quitToMenu), for: .touchUpInside)
+        quit.translatesAutoresizingMaskIntoConstraints = false
+        pauseView.addSubview(quit)
+
+        NSLayoutConstraint.activate([
+            title.centerXAnchor.constraint(equalTo: pauseView.centerXAnchor),
+            title.centerYAnchor.constraint(equalTo: pauseView.centerYAnchor, constant: -70),
+            resume.centerXAnchor.constraint(equalTo: pauseView.centerXAnchor),
+            resume.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 26),
+            resume.widthAnchor.constraint(equalToConstant: 200),
+            resume.heightAnchor.constraint(equalToConstant: 48),
+            quit.centerXAnchor.constraint(equalTo: pauseView.centerXAnchor),
+            quit.topAnchor.constraint(equalTo: resume.bottomAnchor, constant: 14),
+            quit.widthAnchor.constraint(equalToConstant: 200),
+            quit.heightAnchor.constraint(equalToConstant: 44)
+        ])
     }
 
     /// The between-floors card, reused for the win screen. Both are "the tape
@@ -340,7 +708,22 @@ final class GameViewController: UIViewController, MTKViewDelegate {
         ])
     }
 
-    @objc private func toggleLamp() { input.lampOn.toggle() }
+    @objc private func toggleLamp() {
+        input.lampOn.toggle()
+        lampButton.layer.borderColor = input.lampOn
+            ? UIColor(white: 1, alpha: 0.25).cgColor
+            : UIColor(white: 1, alpha: 0.08).cgColor
+    }
+
+    /// IR is a trade, not a free upgrade: the picture goes monochrome green and
+    /// the lamp is what the entity does *not* need to find you.
+    @objc private func toggleNightVision() {
+        nightVision.toggle()
+        nvLabel.isHidden = !nightVision
+        nvButton.layer.borderColor = nightVision
+            ? UIColor(red: 0.49, green: 1, blue: 0.63, alpha: 0.9).cgColor
+            : UIColor(white: 1, alpha: 0.25).cgColor
+    }
 
     @objc private func useAction() {
         guard let session, session.phase == .playing else { return }
@@ -364,9 +747,33 @@ final class GameViewController: UIViewController, MTKViewDelegate {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         guard hud != nil else { return }   // renderer failed; only the notice is up
-        hud.frame = CGRect(x: view.safeAreaInsets.left + 20,
-                           y: view.safeAreaInsets.top + 14,
-                           width: 320, height: 60)
+
+        let left = view.safeAreaInsets.left + 20
+        let top = view.safeAreaInsets.top + 14
+        recDot.frame = CGRect(x: left, y: top + 2, width: 12, height: 12)
+        hud.frame = CGRect(x: left + 20, y: top, width: 340, height: 56)
+        threatLabel.frame = CGRect(x: left, y: top + 60, width: 340, height: 18)
+
+        let rightEdge = view.bounds.width - view.safeAreaInsets.right - 20
+        rightOSD.frame = CGRect(x: rightEdge - 300, y: top + 46, width: 300, height: 54)
+        nvLabel.frame = CGRect(x: left, y: top + 82, width: 200, height: 16)
+
+        // Bars sit bottom-left, clear of the stick's usual thumb position.
+        let barW: CGFloat = 132, barH: CGFloat = 6
+        let barX = left
+        let barY = view.bounds.height - view.safeAreaInsets.bottom - 34
+        vitalsTrack.frame = CGRect(x: barX, y: barY, width: barW, height: barH)
+        staminaTrack.frame = CGRect(x: barX, y: barY + 14, width: barW, height: barH)
+        // Fills keep their frames from `updateOSD`; seed them so a first layout
+        // before the first frame does not flash a zero-width bar.
+        vitalsFill.frame = CGRect(x: barX, y: barY, width: vitalsFill.frame.width, height: barH)
+        staminaFill.frame = CGRect(x: barX, y: barY + 14, width: staminaFill.frame.width, height: barH)
+
+        let mid = view.bounds.midX
+        exitArrow.bounds = CGRect(x: 0, y: 0, width: 62, height: 62)
+        exitArrow.center = CGPoint(x: mid, y: view.bounds.height * 0.36)
+        tapeArrow.bounds = CGRect(x: 0, y: 0, width: 44, height: 44)
+        tapeArrow.center = CGPoint(x: mid, y: view.bounds.height * 0.46)
     }
 
     override var prefersStatusBarHidden: Bool { true }
@@ -376,7 +783,7 @@ final class GameViewController: UIViewController, MTKViewDelegate {
     // MARK: - Touch
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard session != nil, !session.isDead else { return }
+        guard session != nil, !session.isDead, !isPaused, menuView.isHidden else { return }
         for touch in touches {
             let p = touch.location(in: view)
             if p.x < view.bounds.width * 0.5 {
@@ -396,6 +803,7 @@ final class GameViewController: UIViewController, MTKViewDelegate {
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard !isPaused else { return }
         for touch in touches {
             let p = touch.location(in: view)
             if touch === moveTouch {
@@ -445,27 +853,36 @@ final class GameViewController: UIViewController, MTKViewDelegate {
 
         let size = view.drawableSize
         let aspect = size.height > 0 ? Float(size.width / size.height) : 1.777
-        session.update(deltaTime: dt, input: input, aspect: aspect)
-        // Look deltas are consumed once; movement persists while held.
-        input.lookDeltaX = 0
-        input.lookDeltaY = 0
 
-        // The synth is a few hundred voices of arithmetic on its own thread;
-        // starting it here rather than in viewDidLoad keeps launch clean.
-        if audio == nil {
-            let host = AudioHost()
-            try? host.start()
-            audio = host
-        }
-        if let audio {
-            let decided = session.audio
-            audio.play(decided.voices)
-            audio.update { mixer in
-                mixer.waterLevel = decided.waterLevel
-                mixer.breathLevel = decided.breathLevel
-                mixer.droneLevel = decided.droneLevel
-                mixer.dronePan = decided.dronePan
-                mixer.muffleCutoff = decided.muffleCutoff
+        // Paused still draws — the frozen picture behind the overlay is the
+        // point — it just does not advance the world or the tape.
+        if !isPaused {
+            session.update(deltaTime: dt, input: input, aspect: aspect)
+            // Look deltas are consumed once; movement persists while held.
+            input.lookDeltaX = 0
+            input.lookDeltaY = 0
+
+            // `update` rewrites the tape's state from the game every frame, so
+            // the nightshot switch has to be applied after it, not before.
+            session.tape.infrared = nightVision ? 1 : 0
+
+            // The synth is a few hundred voices of arithmetic on its own thread;
+            // starting it here rather than in viewDidLoad keeps launch clean.
+            if audio == nil {
+                let host = AudioHost()
+                try? host.start()
+                audio = host
+            }
+            if let audio {
+                let decided = session.audio
+                audio.play(decided.voices)
+                audio.update { mixer in
+                    mixer.waterLevel = decided.waterLevel
+                    mixer.breathLevel = decided.breathLevel
+                    mixer.droneLevel = decided.droneLevel
+                    mixer.dronePan = decided.dronePan
+                    mixer.muffleCutoff = decided.muffleCutoff
+                }
             }
         }
 
@@ -476,24 +893,34 @@ final class GameViewController: UIViewController, MTKViewDelegate {
                           tape: session.tape, drawableSize: size,
                           passDescriptor: descriptor, drawable: view.currentDrawable)
         }
-        updateHUD()
+        if !isPaused { updateOSD() }
     }
 
-    private func updateHUD() {
+    private func updateOSD() {
         switch session.phase {
         case .dead:
             deathView.isHidden = false
             promptButton.isHidden = true
             messageLabel.text = nil
             hud.text = ""
+            threatLabel.text = ""
+            rightOSD.text = ""
+            recDot.isHidden = true
+            exitArrow.isHidden = true
+            tapeArrow.isHidden = true
             return
         case .escaped:
             promptButton.isHidden = true
             messageLabel.text = nil
             hud.text = ""
+            threatLabel.text = ""
+            rightOSD.text = ""
+            recDot.isHidden = true
+            exitArrow.isHidden = true
+            tapeArrow.isHidden = true
             let secs = Int(session.elapsed)
             showCard(title: "YOU GOT OUT",
-                     sub: String(format: "RUNTIME %02ld:%02ld\nTAPES RECOVERED %ld", 
+                     sub: String(format: "RUNTIME %02ld:%02ld\nTAPES RECOVERED %ld",
                                  secs / 60, secs % 60, session.tapesTotal),
                      showRestart: true)
             return
@@ -507,6 +934,7 @@ final class GameViewController: UIViewController, MTKViewDelegate {
         }
         deathView.isHidden = true
         cardView.isHidden = true
+        recDot.isHidden = false
 
         // The prompt is the only thing telling you an objective is actionable,
         // so it doubles as the button on touch.
@@ -524,26 +952,49 @@ final class GameViewController: UIViewController, MTKViewDelegate {
         let name = LevelSpec.standardLevels[session.levelIndex].name
         let secs = Int(session.elapsed)
         let clock = String(format: "%02ld:%02ld", secs / 60, secs % 60)
-        var text = "● REC   \(name)   \(clock)"
-        text += "\nTAPES   \(session.tapesThisFloor)/\(session.tapeGoal) HERE   \(session.tapesTotal) TOTAL"
-        text += "\nVITALS  \(Int(session.health))%   STAMINA \(Int(session.player.stamina))%"
-        if let exit = session.exit {
-            let d = ((exit.x - session.player.x) * (exit.x - session.player.x)
-                     + (exit.z - session.player.z) * (exit.z - session.player.z)).squareRoot()
-            let word = session.isFinalFloor ? "EXIT" : "DESCEND"
-            text += String(format: "\n%@ ▸ %.0fM%@", word, d, exit.revealed ? "" : "  (UNFOUND)")
-        }
+        hud.text = "REC   \(name)   \(clock)"
+            + "\nTAPES  \(session.tapesThisFloor)/\(session.tapeGoal) HERE   \(session.tapesTotal) TOTAL"
+
         // Three readings, in order of how much trouble you are in. A sighting
         // gets no distance — knowing exactly how far away it is would defeat
         // the point of it standing there.
         if let d = session.hunterDistance {
-            text += String(format: "\n⚠ IT IS COMING — %.0fM", d)
+            threatLabel.text = String(format: "⚠ IT IS COMING — %.0fM", d)
+            threatLabel.textColor = UIColor(red: 1, green: 0.3, blue: 0.26, alpha: 1)
         } else if session.presence.state == .seen {
-            text += "\n▚ CONTACT"
+            threatLabel.text = "▚ CONTACT"
+            threatLabel.textColor = UIColor(red: 1, green: 0.78, blue: 0.35, alpha: 1)
         } else {
-            text += String(format: "\nSIGNAL ▸ %.0fS", max(0, session.nextHunt))
+            threatLabel.text = String(format: "SIGNAL ▸ %.0fS", max(0, session.nextHunt))
+            threatLabel.textColor = UIColor(white: 0.62, alpha: 1)
         }
-        hud.text = text
+
+        // Right-hand OSD: where you are going, and (on SIMPLE) what you still
+        // have to pick up before it is worth going there.
+        var osd = ""
+        if let exit = session.exit, let d = session.exitDistance {
+            let word = session.isFinalFloor ? "EXIT" : "DESCEND"
+            osd = String(format: "%@ ▸ %.0fM%@", word, d, exit.revealed ? "" : "  (UNFOUND)")
+            exitArrow.isHidden = false
+            exitArrow.transform = CGAffineTransform(
+                rotationAngle: CGFloat(session.bearing(toX: exit.x, z: exit.z)))
+        } else {
+            exitArrow.isHidden = true
+        }
+
+        if session.difficulty.tapeHints, let near = session.nearestUnfoundTape {
+            osd += String(format: "\nTAPE ▸ %.0fM", near.distance)
+            tapeArrow.isHidden = false
+            tapeArrow.transform = CGAffineTransform(
+                rotationAngle: CGFloat(session.bearing(toX: near.tape.x, z: near.tape.z)))
+        } else {
+            tapeArrow.isHidden = true
+        }
+        rightOSD.text = osd
+
+        let barW: CGFloat = 132
+        vitalsFill.frame.size.width = barW * CGFloat(max(0, min(1, session.health / 100)))
+        staminaFill.frame.size.width = barW * CGFloat(max(0, min(1, session.player.stamina / 100)))
     }
 
     @objc private func restart() {
