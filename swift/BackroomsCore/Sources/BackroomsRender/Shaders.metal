@@ -555,9 +555,15 @@ struct PostUniforms {
 };
 
 static inline float3 worldFromDepth(float2 uv, float depth, float4x4 invVP) {
-    // Metal clip space: xy in [-1,1], z in [0,1]. `uv` is the y-up coordinate
-    // the fullscreen triangle hands down, matching the tape pass.
-    float4 ndc = float4(uv.x * 2.0 - 1.0, uv.y * 2.0 - 1.0, depth, 1.0);
+    // Metal clip space is y-up; a texture coordinate is y-DOWN, with v = 0 at
+    // the top row. Those are opposite, so v has to be flipped on the way back
+    // into clip space.
+    //
+    // Getting this wrong does not look like a broken effect — it looks like a
+    // reflection. Every reconstructed position lands mirrored about the
+    // horizon, so the floor's lighting is painted onto the ceiling and the
+    // room appears to have a polished roof.
+    float4 ndc = float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
     float4 world = invVP * ndc;
     return world.xyz / (abs(world.w) < 1e-6 ? 1e-6 : world.w);
 }
@@ -626,7 +632,10 @@ fragment float4 ssao_fragment(PostOut in [[stage_in]],
 
         float4 clip = u.viewProjection * float4(samplePos, 1.0);
         if (clip.w <= 0.0) continue;
-        float2 sUv = (clip.xy / clip.w) * 0.5 + 0.5;
+        // Inverse of `worldFromDepth`, flip included — these two must agree or
+        // the occlusion is sampled from the wrong half of the screen.
+        float2 ndcXY = clip.xy / clip.w;
+        float2 sUv = float2(ndcXY.x * 0.5 + 0.5, 0.5 - ndcXY.y * 0.5);
         if (sUv.x < 0.0 || sUv.x > 1.0 || sUv.y < 0.0 || sUv.y > 1.0) continue;
 
         float sampleDepth = depthTex.sample(samp, sUv);
