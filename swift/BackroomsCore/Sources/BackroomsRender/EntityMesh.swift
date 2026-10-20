@@ -34,11 +34,15 @@ public enum EntityMesh {
         let bob: Float          // vertical rise and fall of the hips
         let sway: Float         // slow lateral drift of the spine
 
-        init(phase: Float) {
+        /// `motion` is 0 for a thing standing perfectly still and 1 for a
+        /// full run. A sighting that keeps swinging its legs on the spot is
+        /// the single most immersion-breaking thing a creature can do.
+        init(phase: Float, motion: Float = 1) {
             let t = phase * 2.6
-            swing = sinf(t) * 0.34
-            armSwing = -sinf(t) * 0.34 * 0.8
-            bob = fabsf(sinf(t)) * 0.045
+            let m = max(0, min(1, motion))
+            swing = sinf(t) * 0.34 * m
+            armSwing = -sinf(t) * 0.34 * 0.8 * m
+            bob = fabsf(sinf(t)) * 0.045 * m
             // Deliberately not a harmonic of the stride: a sway that lined up
             // with the steps would read as a march.
             sway = sinf(phase * 1.3) * 0.030
@@ -119,10 +123,21 @@ public enum EntityMesh {
     /// that is walking and a shape that is being dragged.
     ///
     /// Drop-in for `stickman`: same signature, same pose, same ground contact.
+    /// - Parameters:
+    ///   - motion: 0 standing, 1 running. Scales the whole stride.
+    ///   - crouch: 0 upright, 1 fully hunched. A thing that is creeping toward
+    ///     you carries itself differently from one that is sprinting at you,
+    ///     and the posture reads at a distance where the stride does not.
+    ///   - headTurn: radians the head is turned off the body's facing. This is
+    ///     what makes a sighting feel like it is watching rather than merely
+    ///     pointing — the body can be square to a wall while the head is not.
     public static func silhouette(x: Float, groundY: Float, z: Float,
-                                  yaw: Float, phase: Float) -> InterleavedMesh {
+                                  yaw: Float, phase: Float,
+                                  motion: Float = 1, crouch: Float = 0,
+                                  headTurn: Float = 0) -> InterleavedMesh {
         var b = MeshBuilder(reservingVertices: silhouetteVertexCount)
-        let g = Gait(phase: phase)
+        let g = Gait(phase: phase, motion: motion)
+        let hunch = max(0, min(1, crouch))
         let c = cosf(yaw), s = sinf(yaw)
 
         /// Local (right, up, forward-is-−Z) to world, matching `addBox`.
@@ -137,8 +152,11 @@ public enum EntityMesh {
         }
 
         let h = EntityMesh.height
-        let hipY = h * 0.50 + g.bob
-        let shoulderY = h * 0.855 + g.bob
+        // Hunching drops the whole frame and pitches it forward; the shoulders
+        // fall further than the hips, which is what folds the spine over.
+        let hipY = h * 0.50 + g.bob - hunch * 0.10
+        let shoulderY = h * 0.855 + g.bob - hunch * 0.20
+        let lean = hunch * 0.16
 
         for side in [Float(-1), 1] {
             // Legs. The foot swings fore and aft; the knee leads it, which is
@@ -165,16 +183,20 @@ public enum EntityMesh {
 
         // Spine, pitched forward from the pelvis to the chest.
         let pelvis = p(g.sway, hipY - 0.02, 0.02)
-        let chest = p(g.sway, shoulderY, -0.06)
+        let chest = p(g.sway, shoulderY, -0.06 - lean)
         bone(pelvis, chest, 0.105, 10, 3)
 
         // Neck, craned further forward than the chest.
-        let neckTop = p(g.sway, h * 0.925 + g.bob, -0.115)
+        let neckTop = p(g.sway, h * 0.925 + g.bob - hunch * 0.22, -0.115 - lean * 1.3)
         bone(chest, neckTop, 0.036, 6, 2)
 
-        // A head too small for the body, and set forward of the shoulders.
-        let head = p(g.sway * 1.2, h * 0.955 + g.bob, -0.135)
-        b.addSphere(originX: head.x, originY: head.y, originZ: head.z, yaw: yaw,
+        // A head too small for the body, set forward of the shoulders, and
+        // turned off the body's facing when it is watching you.
+        let turn = max(-1.3, min(1.3, headTurn))
+        let head = p(g.sway * 1.2 + sinf(turn) * 0.045,
+                     h * 0.955 + g.bob - hunch * 0.24,
+                     -0.135 - lean * 1.3 - (1 - cosf(turn)) * 0.03)
+        b.addSphere(originX: head.x, originY: head.y, originZ: head.z, yaw: yaw + turn,
                     localX: 0, localY: 0, localZ: 0,
                     radius: 0.085, heightRadius: 0.105, segments: 10, rings: 6)
 

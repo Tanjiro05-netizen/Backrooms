@@ -106,6 +106,8 @@ public final class GameSession {
     /// here touches AVFoundation, so the session still runs headless.
     public private(set) var audio = AudioDirector.Output()
     public private(set) var scene: MetalRenderer.LevelScene?
+    /// This floor's authored look. Changes only when the floor does.
+    public private(set) var grade = GradeUniforms.neutral
 
     /// Seconds until the next hunt begins. Only counts down while the entity is
     /// idle — a hunt does not schedule over itself.
@@ -285,6 +287,7 @@ public final class GameSession {
     }
 
     private func applyEnvironment() {
+        grade = GradeUniforms.forTheme(map.spec.theme)
         let e = environment
         uniforms.ambient = SIMD4(e.ambient.x, e.ambient.y, e.ambient.z, e.ambientIntensity)
         uniforms.hemiSky = SIMD4(e.hemiSky.x, e.hemiSky.y, e.hemiSky.z, e.hemiIntensity)
@@ -594,12 +597,46 @@ public final class GameSession {
     /// it is off the map. Hand straight to `MetalRenderer.draw(entity:)`.
     public var entityMesh: InterleavedMesh? {
         guard presence.isVisible else { return nil }
-        return EntityMesh.stickman(x: Float(presence.x),
-                                   groundY: Float(map.groundHeight(atX: presence.x,
-                                                                   z: presence.z)),
-                                   z: Float(presence.z),
-                                   yaw: Float(presence.yaw),
-                                   phase: Float(hunterStride))
+
+        // How it carries itself says more at distance than the stride does —
+        // at twenty metres down a corridor the posture is legible and the
+        // footfalls are not.
+        let motion: Float
+        let crouch: Float
+        switch presence.state {
+        case .idle:
+            motion = 0
+            crouch = 0
+        case .seen:
+            // Standing and watching. It creeps, so there is some stride, but a
+            // sighting pumping its legs on the spot is the single most
+            // immersion-breaking thing a creature can do.
+            motion = 0.26
+            crouch = 0.55
+        case .hunt:
+            // Running you down, pitched forward into it.
+            motion = 1
+            crouch = 0.22
+        }
+
+        // The head goes where you are, even when the body does not. A sighting
+        // square to a wall with its head turned onto you is the whole point of
+        // the sighting state, and the body alone cannot express it.
+        let dx = player.x - presence.x
+        let dz = player.z - presence.z
+        var turn = atan2(dx, dz) - (presence.yaw + Double.pi)
+        while turn > Double.pi { turn -= 2 * Double.pi }
+        while turn < -Double.pi { turn += 2 * Double.pi }
+
+        return EntityMesh.silhouette(x: Float(presence.x),
+                                     groundY: Float(map.groundHeight(atX: presence.x,
+                                                                     z: presence.z)),
+                                     z: Float(presence.z),
+                                     yaw: Float(presence.yaw),
+                                     phase: Float(hunterStride),
+                                     motion: motion,
+                                     crouch: crouch,
+                                     headTurn: Float(turn))
     }
 }
 #endif

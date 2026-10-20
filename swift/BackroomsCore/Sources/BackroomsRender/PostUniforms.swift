@@ -16,7 +16,8 @@ public struct PostUniforms: Equatable {
     /// World → clip, for projecting a sampled point back onto the screen.
     public var viewProjection: matrix_float4x4 = matrix_identity_float4x4
     /// SSAO: x = radius in metres, y = strength, z/w = source texel size.
-    /// Volumetrics: x = density, y = unused, z = march cap in metres, w spare.
+    /// Volumetrics: x = density, y = seconds (drives the dust drift),
+    /// z = march cap in metres, w spare.
     public var params = SIMD4<Float>(0, 0, 0, 0)
     /// xyz = camera world position.
     public var camera = SIMD4<Float>(0, 0, 0, 0)

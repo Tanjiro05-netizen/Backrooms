@@ -481,10 +481,27 @@ fragment float4 bloom_blur_fragment(PostOut in [[stage_in]],
     return float4(sum, 1.0);
 }
 
+/* The per-floor look, authored rather than derived.
+
+   Each floor's colour currently falls out of whatever its lights happen to be,
+   which is how a renderer looks when nobody has decided anything. This is the
+   decision: a tint, a saturation, a contrast and a black lift per theme, so
+   the Poolrooms read milky and bleached and the Pipes read hot and crushed
+   even when both are lit to the same level.
+
+   It sits after the tone-map, in display space, because that is where a grade
+   is legible and cannot blow out — the filmic curve has already decided what
+   survives. */
+struct GradeUniforms {
+    float4 tint;    // rgb = channel gain, w = saturation
+    float4 curve;   // x = contrast about mid, y = black lift, zw spare
+};
+
 /* x = bloom intensity, y = AO strength, z = volumetric intensity, w spare. */
 
 fragment float4 composite_fragment(PostOut in [[stage_in]],
                                    constant float4 &p [[buffer(0)]],
+                                   constant GradeUniforms &grade [[buffer(1)]],
                                    texture2d<float> sceneTex [[texture(0)]],
                                    texture2d<float> bloomTex [[texture(1)]],
                                    texture2d<float> aoTex [[texture(2)]],
@@ -506,7 +523,19 @@ fragment float4 composite_fragment(PostOut in [[stage_in]],
     color += bloomTex.sample(samp, in.uv).rgb * p.x;
     color += volumeTex.sample(samp, in.uv).rgb * p.z;
 
-    return float4(acesFilm(color), 1.0);
+    float3 graded = acesFilm(color);
+
+    // Saturation first, so the tint lands on a known starting point.
+    float luma = dot(graded, float3(0.2126, 0.7152, 0.0722));
+    graded = mix(float3(luma), graded, grade.tint.w);
+    graded *= grade.tint.rgb;
+
+    // Contrast pivots about mid-grey; lift raises the floor afterwards, which
+    // is what gives an over-lit tiled room its washed, milky black.
+    graded = (graded - 0.5) * grade.curve.x + 0.5;
+    graded = graded * (1.0 - grade.curve.y) + grade.curve.y;
+
+    return float4(clamp(graded, 0.0, 1.0), 1.0);
 }
 
 /* =========================================================
@@ -535,6 +564,30 @@ static inline float3 worldFromDepth(float2 uv, float depth, float4x4 invVP) {
 
 static inline float postHash(float2 p) {
     return fract(sin(dot(p, float2(12.9898, 78.233))) * 43758.5453);
+}
+
+/* Airborne dust, as a density field rather than particles.
+
+   The inscatter march currently runs through perfectly clean air, so a shaft
+   is a smooth cone — which reads as a painted gradient, not as light passing
+   through a room. Real air has structure: motes drift, and the beam is
+   visible precisely *because* something is in it.
+
+   Three octaves of drifting value noise, weighted so the coarse layer gives
+   slow billows and the fine one gives the grain that catches the eye. The
+   whole field rises slowly, because dust in a still room does. */
+static inline float dustDensity(float3 p, float t) {
+    float3 drift = float3(t * 0.013, t * 0.021, t * -0.009);
+    float3 q = p * 0.45 + drift;
+
+    float a = sin(q.x * 1.7) * sin(q.y * 2.3 + 1.1) * sin(q.z * 1.9 + 2.7);
+    float b = sin(q.x * 4.1 + 0.6) * sin(q.y * 3.7) * sin(q.z * 4.3 + 1.4);
+    float c = sin(q.x * 9.3) * sin(q.y * 8.1 + 2.2) * sin(q.z * 7.7);
+
+    float n = a * 0.55 + b * 0.30 + c * 0.15;
+    // Biased so most of the volume is thin and the thick patches are rare —
+    // uniform dust is just fog and does nothing for a shaft.
+    return clamp(0.55 + n * 0.85, 0.0, 1.6);
 }
 
 /* Hemisphere SSAO. The normal comes from the derivatives of the reconstructed
@@ -623,6 +676,9 @@ fragment float4 volumetric_fragment(PostOut in [[stage_in]],
 
     for (int i = 0; i < STEPS; ++i) {
         float3 sp = camera + dir * ((float(i) + jitter) * stepLength);
+        // What the light is actually scattering off.
+        float dust = dustDensity(sp, u.params.y);
+        float3 here = float3(0.0);
 
         if (s.flash.w > 0.0) {
             float3 toC = camera - sp;
@@ -631,7 +687,7 @@ fragment float4 volumetric_fragment(PostOut in [[stage_in]],
             float spot = dot(-L, normalize(s.cameraForward.xyz));
             float cone = smoothstep(s.flashParams.y, s.flashParams.x, spot);
             float atten = clamp(1.0 - dl / s.flashParams.z, 0.0, 1.0);
-            accum += s.flash.rgb * (s.flash.w * cone * atten * atten);
+            here += s.flash.rgb * (s.flash.w * cone * atten * atten);
         }
 
         for (int j = 0; j < lightCount; ++j) {
@@ -640,9 +696,11 @@ fragment float4 volumetric_fragment(PostOut in [[stage_in]],
             float dl = length(toL);
             if (dl > range) continue;
             float atten = clamp(1.0 - dl / range, 0.0, 1.0);
-            accum += s.pointLights[j].colorIntensity.rgb
-                   * (s.pointLights[j].colorIntensity.w * atten * atten);
+            here += s.pointLights[j].colorIntensity.rgb
+                  * (s.pointLights[j].colorIntensity.w * atten * atten);
         }
+
+        accum += here * dust;
     }
 
     return float4(accum * stepLength * u.params.x, 1.0);

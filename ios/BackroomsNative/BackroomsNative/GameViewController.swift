@@ -890,7 +890,8 @@ final class GameViewController: UIViewController, MTKViewDelegate {
            let descriptor = view.currentRenderPassDescriptor {
             renderer.draw(scene: scene, uniforms: session.uniforms,
                           entity: session.entityMesh,
-                          tape: session.tape, drawableSize: size,
+                          tape: session.tape, grade: session.grade,
+                          drawableSize: size,
                           passDescriptor: descriptor, drawable: view.currentDrawable)
         }
         if !isPaused { updateOSD() }

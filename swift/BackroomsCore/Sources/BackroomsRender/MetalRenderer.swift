@@ -460,6 +460,7 @@ public final class MetalRenderer {
     public func draw(scene: LevelScene, uniforms: SceneUniforms,
                      entity: InterleavedMesh? = nil,
                      tape: VHSUniforms? = nil,
+                     grade: GradeUniforms? = nil,
                      drawableSize: CGSize = .zero,
                      passDescriptor: MTLRenderPassDescriptor,
                      drawable: MTLDrawable?) {
@@ -645,7 +646,10 @@ public final class MetalRenderer {
 
             var volumeInput: MTLTexture? = nil
             if let volumePipeline, let volumeTexture {
-                post.params = SIMD4<Float>(MetalRenderer.volumeDensity, 0,
+                // y carries the clock: the dust field drifts, and a frozen
+                // dust field is just a dirty lens.
+                post.params = SIMD4<Float>(MetalRenderer.volumeDensity,
+                                           tape?.time ?? 0,
                                            MetalRenderer.volumeRange, 0)
                 fullscreenPass(commandBuffer, pipeline: volumePipeline, into: volumeTexture,
                                textures: [sceneDepth],
@@ -659,7 +663,8 @@ public final class MetalRenderer {
                            textures: [sceneColor, bloomA, aoInput,
                                       volumeInput ?? blackTexture],
                            floats: [MetalRenderer.bloomIntensity, aoStrength,
-                                    volumeInput == nil ? 0 : MetalRenderer.volumeIntensity, 0])
+                                    volumeInput == nil ? 0 : MetalRenderer.volumeIntensity, 0],
+                           sceneBuffer: (grade ?? .neutral).packed())
         }
 
         if useTape, var tapeUniforms = tape,
