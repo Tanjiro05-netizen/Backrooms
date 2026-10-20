@@ -114,6 +114,54 @@ public struct Mat4: Equatable, Sendable {
         return Mat4(out)
     }
 
+    /// Symmetric orthographic projection in the **Metal** convention, where
+    /// clip z maps to [0, 1].
+    ///
+    /// Shadows from a ceiling panel use this rather than a perspective frustum
+    /// for a practical reason: a fixture three metres up lighting a room
+    /// thirteen metres across would need a field of view past 150°, which no
+    /// usable shadow map survives. An orthographic projection trades the
+    /// divergence of a real point light — a crate's shadow should widen as it
+    /// falls — for a map whose texels are the same size everywhere. Over the
+    /// distance between a ceiling and the things under it, that trade is
+    /// invisible, and it is what makes the shadow stable instead of swimming.
+    public static func orthographicMetal(halfExtent h: Float,
+                                         near n: Float, far f: Float) -> Mat4 {
+        let inv = 1 / max(h, 1e-4)
+        let nf = 1 / (n - f)
+        return Mat4([inv, 0, 0, 0,
+                     0, inv, 0, 0,
+                     0, 0, nf, 0,
+                     0, 0, n * nf, 1])
+    }
+
+    /// View matrix for a camera at `(x, y, z)` pointing straight down.
+    ///
+    /// Built from an explicit orthonormal basis rather than by feeding a −90°
+    /// pitch through `rotationYXZ`: straight down is exactly where a
+    /// yaw-pitch-roll euler becomes degenerate, and the resulting gimbal would
+    /// make the shadow map's orientation depend on a yaw that no longer means
+    /// anything.
+    public static func lookingDown(x px: Float, y py: Float, z pz: Float) -> Mat4 {
+        // Camera looks along its own −Z, so +Z is "backward" = straight up.
+        let xAxis = SIMD3<Float>(1, 0, 0)
+        let zAxis = SIMD3<Float>(0, 1, 0)
+        let yAxis = SIMD3<Float>(0, 0, -1)   // cross(zAxis, xAxis)
+        let p = SIMD3<Float>(px, py, pz)
+
+        var out = [Float](repeating: 0, count: 16)
+        let axes = [xAxis, yAxis, zAxis]
+        for row in 0..<3 {
+            let a = axes[row]
+            out[0 * 4 + row] = a.x
+            out[1 * 4 + row] = a.y
+            out[2 * 4 + row] = a.z
+            out[3 * 4 + row] = -(a.x * p.x + a.y * p.y + a.z * p.z)
+        }
+        out[15] = 1
+        return Mat4(out)
+    }
+
     // MARK: - Ops
 
     /// Matrix product, `self · rhs` (column-vector convention, as in Three.js

@@ -61,6 +61,10 @@ public final class MetalRenderer {
     /// Depth-tested but not depth-writing: a transparent surface must not
     /// occlude what is behind it in the buffer.
     private var waterDepthState: MTLDepthStencilState?
+    /// Depth-only pass from the nearest ceiling fixture.
+    private var shadowPipeline: MTLRenderPipelineState?
+    private var shadowMap: MTLTexture?
+    private var shadowSampler: MTLSamplerState?
     private var depthState: MTLDepthStencilState?
     private var samplerState: MTLSamplerState?
     /// Depth cannot be linearly filtered on every GPU, and the screen-space
@@ -201,6 +205,36 @@ public final class MetalRenderer {
         // the direct LDR path, which is the renderer as it was before.
         desc.colorAttachments[0].pixelFormat = MetalRenderer.hdrFormat
         scenePipelineHDR = try device.makeRenderPipelineState(descriptor: desc)
+
+        // The shadow pass writes depth and nothing else, so it has no
+        // fragment function at all — rasterisation still runs and the depth
+        // attachment still fills, at a fraction of the cost of shading.
+        if let shadowVertex = library.makeFunction(name: "shadow_vertex") {
+            let d = MTLRenderPipelineDescriptor()
+            d.vertexFunction = shadowVertex
+            d.fragmentFunction = nil
+            d.vertexDescriptor = vd
+            d.depthAttachmentPixelFormat = depthFormat
+            shadowPipeline = try device.makeRenderPipelineState(descriptor: d)
+
+            let mapDesc = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: depthFormat,
+                width: ShadowUniforms.mapSize, height: ShadowUniforms.mapSize,
+                mipmapped: false)
+            mapDesc.usage = [.renderTarget, .shaderRead]
+            mapDesc.storageMode = .private
+            shadowMap = device.makeTexture(descriptor: mapDesc)
+
+            // Clamped so a fragment outside the map reads its edge rather than
+            // wrapping a shadow in from the far side of the room; linear so
+            // the PCF taps blend instead of stepping.
+            let ss = MTLSamplerDescriptor()
+            ss.minFilter = .linear
+            ss.magFilter = .linear
+            ss.sAddressMode = .clampToEdge
+            ss.tAddressMode = .clampToEdge
+            shadowSampler = device.makeSamplerState(descriptor: ss)
+        }
 
         // Water: same vertex layout as the level, but alpha-blended and
         // depth-write disabled, so it needs its own pipeline per target format.
@@ -494,6 +528,53 @@ public final class MetalRenderer {
             return
         }
         commandBuffer.addCompletedHandler { [sem = inFlight] _ in sem.signal() }
+
+        // Depth from the nearest fixture, before anything is shaded.
+        var shadow = ShadowUniforms()
+        if let shadowPipeline, let shadowMap, let depthState,
+           Int(uniforms.misc.x) > 0 {
+            let fixture = uniforms.pointLights[0].positionRange
+            shadow = ShadowUniforms.forFixture(x: fixture.x, y: fixture.y, z: fixture.z)
+            var shadowPacked = shadow.packed()
+            let shadowLength = shadowPacked.count * MemoryLayout<Float>.size
+
+            let shadowPass = MTLRenderPassDescriptor()
+            shadowPass.depthAttachment.texture = shadowMap
+            shadowPass.depthAttachment.loadAction = .clear
+            shadowPass.depthAttachment.storeAction = .store
+            shadowPass.depthAttachment.clearDepth = 1.0
+
+            if let shadowEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: shadowPass) {
+                shadowEncoder.setRenderPipelineState(shadowPipeline)
+                shadowEncoder.setDepthStencilState(depthState)
+                // Front faces culled instead of back: shifting the shadow to
+                // the far side of a wall is the standard trick for keeping
+                // depth acne off the surfaces you can actually see.
+                shadowEncoder.setCullMode(.front)
+                shadowEncoder.setFrontFacing(.counterClockwise)
+                shadowEncoder.setVertexBytes(&shadowPacked, length: shadowLength, index: 2)
+
+                for (buffer, count) in scene.chunkBuffers {
+                    shadowEncoder.setVertexBuffer(buffer, offset: 0, index: 0)
+                    shadowEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: count)
+                }
+                // Props cast; the floor and ceiling planes do not — a flat
+                // plane can only shadow itself, and it is the surface most
+                // prone to acne. The creature does not cast either: its
+                // geometry is written into the per-frame ring buffer during
+                // the scene pass, which has not happened yet at this point.
+                // Worth revisiting — a thing that throws no shadow is exactly
+                // the thing you want throwing one.
+                shadowEncoder.setCullMode(.none)
+                for props in [scene.propsDark, scene.propsBright] {
+                    guard let props else { continue }
+                    shadowEncoder.setVertexBuffer(props.buffer, offset: 0, index: 0)
+                    shadowEncoder.drawPrimitives(type: .triangle, vertexStart: 0,
+                                                 vertexCount: props.vertexCount)
+                }
+                shadowEncoder.endEncoding()
+            }
+        }
         guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: scenePass) else {
             commandBuffer.commit()
             return
@@ -513,6 +594,12 @@ public final class MetalRenderer {
         encoder.setVertexBytes(&packed, length: packed.count * MemoryLayout<Float>.size, index: 1)
         encoder.setFragmentBytes(&packed, length: packed.count * MemoryLayout<Float>.size, index: 1)
         if let samplerState { encoder.setFragmentSamplerState(samplerState, index: 0) }
+        var shadowPackedForScene = shadow.packed()
+        encoder.setFragmentBytes(&shadowPackedForScene,
+                                 length: shadowPackedForScene.count * MemoryLayout<Float>.size,
+                                 index: 2)
+        encoder.setFragmentTexture(shadowMap, index: 3)
+        if let shadowSampler { encoder.setFragmentSamplerState(shadowSampler, index: 1) }
 
         /// Binds a material, or the flat stand-ins if the level was built
         /// before textures existed.

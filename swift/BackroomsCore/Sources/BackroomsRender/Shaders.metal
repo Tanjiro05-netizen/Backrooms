@@ -89,6 +89,62 @@ static inline float3x3 tangentFrame(float3 N) {
     return float3x3(T, B, N);
 }
 
+/* Shadows from the nearest ceiling fixture.
+
+   Contact shadows ground an object against the floor it stands on, but they
+   reach half a metre and nothing more — a crate still cannot throw a shadow
+   across a room, and a doorway cannot cut a shape out of the light beyond it.
+   That is what a shadow map is for, and it is the last large thing this
+   renderer was missing.
+
+   One light, the nearest, because each shadowed light costs a full extra
+   geometry pass. In a corridor lit by a row of identical troffers the nearest
+   one is casting the shadow you are looking at; the others contribute a wash
+   that reads perfectly well unshadowed. */
+struct ShadowUniforms {
+    float4x4 lightViewProjection;
+    float4 params;   // x = enabled, y = depth bias, z = texel size, w = strength
+};
+
+vertex float4 shadow_vertex(VertexIn in [[stage_in]],
+                            constant ShadowUniforms &sh [[buffer(2)]]) {
+    return sh.lightViewProjection * float4(in.position, 1.0);
+}
+
+static inline float shadowFactor(float3 worldPos, float3 N, float3 L,
+                                 constant ShadowUniforms &sh,
+                                 depth2d<float> shadowMap, sampler ss) {
+    if (sh.params.x < 0.5) return 1.0;
+
+    float4 lightClip = sh.lightViewProjection * float4(worldPos, 1.0);
+    if (lightClip.w <= 0.0) return 1.0;
+    float3 ndc = lightClip.xyz / lightClip.w;
+    if (ndc.z < 0.0 || ndc.z > 1.0) return 1.0;
+
+    float2 uv = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
+
+    // Slope-scaled bias. A surface nearly edge-on to the light crosses many
+    // depth texels within one screen pixel, so it needs far more bias than one
+    // facing the light — a single constant bias either peters the shadow off
+    // the floor or stripes every wall with acne.
+    float ndl = max(dot(N, L), 0.0);
+    float bias = sh.params.y * (1.0 + 2.5 * (1.0 - ndl));
+
+    // 3x3 PCF. Not soft, but enough that the edge is a gradient rather than a
+    // staircase, which is all that is needed under a diffuse ceiling panel.
+    float texel = sh.params.z;
+    float lit = 0.0;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            float stored = shadowMap.sample(ss, uv + float2(float(x), float(y)) * texel);
+            lit += (ndc.z - bias > stored) ? 0.0 : 1.0;
+        }
+    }
+    lit /= 9.0;
+    return mix(1.0, lit, clamp(sh.params.w, 0.0, 1.0));
+}
+
 /* Inverse-square falloff with a window that reaches zero at the light's range.
 
    The old `(1 - d/r)^2` is not how light behaves and it is most of why a lit
@@ -186,10 +242,13 @@ static inline float3 acesFilm(float3 x) {
 
 fragment float4 level_fragment(VertexOut in [[stage_in]],
                                constant SceneUniforms &u [[buffer(1)]],
+                               constant ShadowUniforms &sh [[buffer(2)]],
                                texture2d<float> albedo [[texture(0)]],
                                texture2d<float> normalTex [[texture(1)]],
                                texture2d<float> roughTex [[texture(2)]],
-                               sampler samp [[sampler(0)]]) {
+                               depth2d<float> shadowMap [[texture(3)]],
+                               sampler samp [[sampler(0)]],
+                               sampler shadowSamp [[sampler(1)]]) {
     float3 base = albedo.sample(samp, in.uv).rgb;
     float3 N = normalize(in.normal);
 
@@ -242,6 +301,13 @@ fragment float4 level_fragment(VertexOut in [[stage_in]],
         float spread = clamp(roughness + SOURCE_RADIUS / (2.0 * max(dist, 0.1)), roughness, 1.0);
 
         float atten = lightFalloff(dist, range) * LIGHT_SCALE;
+
+        // `loadNearestLights` sorts by distance, so slot 0 is the fixture the
+        // shadow map was rendered from — and the only one that can be tested.
+        if (i == 0) {
+            atten *= shadowFactor(in.worldPos, N, L, sh, shadowMap, shadowSamp);
+        }
+
         float3 radiance = u.pointLights[i].colorIntensity.rgb
                         * (u.pointLights[i].colorIntensity.w * atten);
         direct += pbrDirect(N, V, L, base, spread, F0, Lspec) * radiance * ndl;
