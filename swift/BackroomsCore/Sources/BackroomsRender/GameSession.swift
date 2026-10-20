@@ -80,6 +80,15 @@ public final class GameSession {
     private var dressing: PropMesh.Dressing?
     public private(set) var player: PlayerSim
     public private(set) var camera = Camera()
+    /// The camera the renderer actually sees through: `camera` plus the
+    /// operator's hands. Deliberately separate — `camera` stays the
+    /// simulation's aim, because the entity's gaze rules and the interaction
+    /// picker read it, and both are fixture-tested.
+    public private(set) var viewCamera = Camera()
+    private var handheld = Handheld()
+    /// The lens eases between its walking and running angle instead of
+    /// snapping, which is what it did before and reads as a glitch.
+    private var fovCurrent: Float = Camera.baseFOV
     /// The entity's whole state machine — idle, watching you, or hunting.
     public private(set) var presence: EntityPresence
     /// The chase specifically, non-nil only while it is actually hunting.
@@ -251,6 +260,8 @@ public final class GameSession {
         messageTime = 0
         applyEnvironment()
         placeObjectives()
+        handheld.reset(yaw: Double(camera.yaw))
+        fovCurrent = Camera.baseFOV
         lastPlayerX = player.x
         lastPlayerZ = player.z
         if let renderer {
@@ -322,14 +333,37 @@ public final class GameSession {
         camera.yaw = lookYaw
         camera.pitch = Float(pitch)
         camera.aspect = aspect
-        camera.fov = (input.run && player.moveAmount > 3.6) ? Camera.sprintFOV : Camera.baseFOV
 
-        uniforms.apply(camera: camera)
+        // Ease the lens. 8/sec is quick enough to feel like a response to
+        // breaking into a run and slow enough that you see it happen.
+        let fovTarget = (input.run && player.moveAmount > 3.6) ? Camera.sprintFOV : Camera.baseFOV
+        fovCurrent += (fovTarget - fovCurrent) * Float(min(1, deltaTime * 8))
+        camera.fov = fovCurrent
+
+        // Hand the rendered camera to the operator. Everything the simulation
+        // decides has already been decided off `camera` above.
+        let inWater = map.spec.theme == .pool && player.groundY < 0.25
+        let pose = handheld.update(dt: deltaTime, time: tapeClock + deltaTime,
+                                   yaw: Double(camera.yaw), pitch: pitch,
+                                   moveAmount: player.moveAmount,
+                                   strafe: input.moveX,
+                                   inWater: inWater,
+                                   alive: phase == .playing)
+        viewCamera = camera
+        viewCamera.x += pose.offsetX
+        viewCamera.y += pose.offsetY
+        viewCamera.z += pose.offsetZ
+        viewCamera.yaw = pose.yaw
+        viewCamera.pitch = pose.pitch
+        viewCamera.roll = pose.roll
+
+        uniforms.apply(camera: viewCamera)
         uniforms.loadNearestLights(
             from: map, playerX: player.x, playerZ: player.z,
             lightY: Float(map.spec.wallHeight) - environment.lightDrop,
             color: environment.lightColor,
-            intensity: environment.lightIntensity, range: environment.lightRange)
+            intensity: environment.lightIntensity, range: environment.lightRange,
+            flickerPhase: tapeClock + deltaTime)
         let lamp: Float = input.lampOn ? 2.6 : 0
         uniforms.flash = SIMD4(1.0, 0.953, 0.847, lamp)
         // `elapsed` freezes on death and resets per floor, but the tape has
@@ -369,6 +403,8 @@ public final class GameSession {
             case .attack:
                 attackTimer = GameSession.attackCooldown
                 health = max(0, health - GameSession.attackDamage)
+                // The operator is holding the camera when it hits them.
+                handheld.kick(0.055)
                 if health <= 0 { phase = .dead }
             case .huntBegan:
                 // Adrenaline: you always get a chance to run, even if you were

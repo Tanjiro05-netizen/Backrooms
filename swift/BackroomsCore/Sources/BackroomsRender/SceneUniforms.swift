@@ -101,10 +101,15 @@ public struct SceneUniforms {
 
     /// Load the nearest ceiling fixtures, exactly as the web renderer does with
     /// its pool of eight point lights.
+    ///
+    /// `flickerPhase` is the tape clock. Pass it and fixtures the generator
+    /// marked as faulty stutter; pass nil and every fixture burns steady, which
+    /// is what the callers that only care about placement want.
     public mutating func loadNearestLights(from map: GameMap,
                                            playerX: Double, playerZ: Double,
                                            lightY: Float, color: SIMD3<Float>,
-                                           intensity: Float, range: Float) {
+                                           intensity: Float, range: Float,
+                                           flickerPhase: Double? = nil) {
         let ranked = map.fixtures
             .map { f -> (Double, GameMap.Fixture) in
                 let dx = map.cellWorldX(f.cellX) - playerX
@@ -118,10 +123,21 @@ public struct SceneUniforms {
         for (i, entry) in ranked.enumerated() {
             let f = entry.1
             // A dead fixture still exists in the world; it just does not light.
+            //
+            // The map generator has always marked faulty fixtures and the
+            // renderer has always ignored it, so every tube burned steady. The
+            // two-frequency stutter is the web build's: a fluorescent fault is
+            // a starter failing to strike, which is a fast flutter inside a
+            // slower on-off, not noise.
+            var lit = intensity
+            if f.flicker, let t = flickerPhase {
+                let struck = sin(t * 23) > 0.45 || sin(t * 61) > 0.92
+                lit *= struck ? 1.0 : 0.25
+            }
             pointLights[i] = PointLightUniform(
                 x: Float(map.cellWorldX(f.cellX)), y: lightY,
                 z: Float(map.cellWorldZ(f.cellZ)), range: range,
-                color: color, intensity: intensity)
+                color: color, intensity: lit)
         }
         misc.x = Float(ranked.count)
     }
