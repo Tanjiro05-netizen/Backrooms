@@ -639,6 +639,9 @@ public final class MetalRenderer {
                 fullscreenPass(commandBuffer, pipeline: ssaoPipeline, into: ssaoTexture,
                                textures: [sceneDepth],
                                floats: post.packed(),
+                               // The contact shadows need to know where the
+                               // lights are, not just where the depth is.
+                               sceneBuffer: packed,
                                sampler: depthSampler)
                 aoInput = ssaoTexture
                 aoStrength = 1

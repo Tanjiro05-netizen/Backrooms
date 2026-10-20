@@ -89,6 +89,42 @@ static inline float3x3 tangentFrame(float3 N) {
     return float3x3(T, B, N);
 }
 
+/* Inverse-square falloff with a window that reaches zero at the light's range.
+
+   The old `(1 - d/r)^2` is not how light behaves and it is most of why a lit
+   room reads as a video game: it holds brightness far too long across the
+   middle distance and then falls off a cliff, which gives the hot core and the
+   sudden black that an interior never has. This is Karis's model — a true
+   inverse square, windowed so the light still reaches exactly zero at its
+   range and the renderer can keep culling at that radius.
+
+   `d^2 + 1` rather than `d^2` keeps the near field finite instead of
+   exploding to infinity at the fixture itself. */
+static inline float lightFalloff(float dist, float range) {
+    float d2 = dist * dist;
+    float r2 = max(range * range, 1e-4);
+    float ratio = clamp(d2 / r2, 0.0, 1.0);
+    float window = 1.0 - ratio * ratio;
+    window *= window;
+    return window / (d2 + 1.0);
+}
+
+/* A true inverse square is far darker across a room than the falloff it
+   replaces, so the authored intensities — which were tuned against the old
+   curve — need rescaling or every floor goes black. This matches the two
+   models at roughly four metres, which is where most of a corridor sits.
+
+   If the game comes out too dim or too hot overall, this is the single number
+   to move. */
+#define LIGHT_SCALE 8.4
+
+/* How big the ceiling fixtures are treated as being, in metres.
+
+   A fluorescent troffer is a soft rectangle roughly this size, not a point.
+   Shading it as a point is what produces a pinpoint specular glint that no
+   real room contains — the highlight has to have a shape. */
+#define SOURCE_RADIUS 0.35
+
 /* Cook-Torrance GGX, replacing the Blinn-Phong lobe this shader used to run.
 
    D: Trowbridge-Reitz (GGX). G: Schlick-GGX with the direct-lighting k, paired
@@ -101,15 +137,20 @@ static inline float3x3 tangentFrame(float3 N) {
    The pi is folded into the intensities instead, which is the usual
    artist-facing convention and keeps the existing tuning meaningful.
 
+   `Lspec` is the direction used for the specular lobe only, which an area
+   light needs to differ from the diffuse direction — see the representative
+   point in the light loop. Pass the same vector twice for a point light.
+
    Returns the BRDF with albedo already applied; the caller multiplies by
    radiance and N·L. */
 static inline float3 pbrDirect(float3 N, float3 V, float3 L, float3 albedo,
-                               float roughness, float3 F0) {
-    float3 H = normalize(V + L);
+                               float roughness, float3 F0, float3 Lspec) {
+    float3 H = normalize(V + Lspec);
     float NdotV = max(dot(N, V), 1e-4);
     float NdotL = max(dot(N, L), 1e-4);
     float NdotH = max(dot(N, H), 0.0);
     float VdotH = max(dot(V, H), 0.0);
+    float NdotLs = max(dot(N, Lspec), 1e-4);
 
     // Perceptual roughness squared to get the GGX alpha, as everyone from
     // Disney onward does — linear roughness maps do not read linearly.
@@ -126,7 +167,7 @@ static inline float3 pbrDirect(float3 N, float3 V, float3 L, float3 albedo,
 
     float3 F = F0 + (1.0 - F0) * pow(clamp(1.0 - VdotH, 0.0, 1.0), 5.0);
 
-    float3 specular = (D * G) * F / max(4.0 * NdotV * NdotL, 1e-4);
+    float3 specular = (D * G) * F / max(4.0 * NdotV * NdotLs, 1e-4);
     // What is not reflected is transmitted into the surface and comes back
     // diffusely — this is the energy conservation the old model simply lacked.
     float3 kD = 1.0 - F;
@@ -175,6 +216,9 @@ fragment float4 level_fragment(VertexOut in [[stage_in]],
     // Direct lighting, albedo already folded in — see `pbrDirect`.
     float3 direct = float3(0.0);
 
+    // The reflection ray, for the area-light representative point below.
+    float3 R = reflect(-V, N);
+
     int lightCount = min(int(u.misc.x), MAX_POINT_LIGHTS);
     for (int i = 0; i < lightCount; ++i) {
         float3 toL = u.pointLights[i].positionRange.xyz - in.worldPos;
@@ -182,13 +226,25 @@ fragment float4 level_fragment(VertexOut in [[stage_in]],
         float dist = length(toL);
         if (dist > range) continue;
         float3 L = toL / max(dist, 1e-4);
-        float atten = clamp(1.0 - dist / range, 0.0, 1.0);
-        atten *= atten;                                   // quadratic-ish falloff
         float ndl = max(dot(N, L), 0.0);
         if (ndl <= 0.0) continue;
+
+        // Representative point: the spot on the fixture's sphere nearest the
+        // reflection ray. This is what turns a pinpoint glint into a highlight
+        // with the fixture's own size and shape.
+        float3 centreToRay = dot(toL, R) * R - toL;
+        float3 closest = toL + centreToRay
+                       * clamp(SOURCE_RADIUS / max(length(centreToRay), 1e-4), 0.0, 1.0);
+        float3 Lspec = normalize(closest);
+
+        // A nearby area light also widens its own lobe. Cheaper than the full
+        // energy renormalisation and reads the same at these sizes.
+        float spread = clamp(roughness + SOURCE_RADIUS / (2.0 * max(dist, 0.1)), roughness, 1.0);
+
+        float atten = lightFalloff(dist, range) * LIGHT_SCALE;
         float3 radiance = u.pointLights[i].colorIntensity.rgb
                         * (u.pointLights[i].colorIntensity.w * atten);
-        direct += pbrDirect(N, V, L, base, roughness, F0) * radiance * ndl;
+        direct += pbrDirect(N, V, L, base, spread, F0, Lspec) * radiance * ndl;
     }
 
     // The camcorder lamp — a spot cone from the operator's eye.
@@ -203,7 +259,7 @@ fragment float4 level_fragment(VertexOut in [[stage_in]],
         float ndl = max(dot(N, L), 0.0);
         if (ndl > 0.0 && cone > 0.0) {
             float3 radiance = u.flash.rgb * (u.flash.w * cone * atten);
-            direct += pbrDirect(N, V, L, base, roughness, F0) * radiance * ndl;
+            direct += pbrDirect(N, V, L, base, roughness, F0, L) * radiance * ndl;
         }
     }
 
@@ -596,12 +652,68 @@ static inline float dustDensity(float3 p, float t) {
     return clamp(0.55 + n * 0.85, 0.0, 1.6);
 }
 
+/* Screen-space contact shadows.
+
+   Nothing in this renderer casts a shadow, which is the loudest remaining
+   reason interiors read as a game: an object with no shadow does not sit on
+   the floor, it hovers above it. Full shadow maps mean a geometry pass per
+   light; this instead walks the depth buffer from the surface toward the
+   light and asks whether anything is in the way.
+
+   It only reaches half a metre, so it does not replace real shadows — but
+   half a metre is exactly the range that grounds a crate on a floor and puts
+   a dark seam where a wall meets it, and those are the contacts the eye reads.
+
+   Steps are fixed in world space rather than screen space, so a shadow does
+   not slide or shimmer as the camera moves. The thickness window exists
+   because a depth buffer is 2.5D: without it, every surface casts an infinite
+   shadow out behind itself. */
+static inline float contactShadow(float3 P, float3 N, float3 L, float3 camera,
+                                  constant PostUniforms &u,
+                                  depth2d<float> depthTex, sampler samp) {
+    const int STEPS = 10;
+    const float reach = 0.55;        // metres
+    const float thickness = 0.14;    // how deep a blocker is assumed to be
+
+    // Step off the surface along its own normal, or it shadows itself.
+    float3 origin = P + N * 0.025;
+
+    for (int i = 1; i <= STEPS; ++i) {
+        float t = (float(i) / float(STEPS)) * reach;
+        float3 sp = origin + L * t;
+
+        float4 clip = u.viewProjection * float4(sp, 1.0);
+        if (clip.w <= 0.0) return 1.0;
+        float2 ndc = clip.xy / clip.w;
+        float2 uv = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
+
+        float sceneDepth = depthTex.sample(samp, uv);
+        if (sceneDepth >= 1.0) continue;
+
+        float3 scenePos = worldFromDepth(uv, sceneDepth, u.invViewProjection);
+        float rayFromCam = length(sp - camera);
+        float sceneFromCam = length(scenePos - camera);
+        float behind = rayFromCam - sceneFromCam;
+
+        // In front of the recorded surface by more than the bias, but not so
+        // far behind it that the blocker cannot plausibly be solid there.
+        if (behind > 0.02 && behind < thickness) {
+            // Fade with distance so the shadow has a soft tail rather than a
+            // hard edge where the march gives up.
+            return 1.0 - 0.85 * (1.0 - t / reach);
+        }
+    }
+    return 1.0;
+}
+
 /* Hemisphere SSAO. The normal comes from the derivatives of the reconstructed
    position rather than a G-buffer: this is a forward renderer with no normal
    target, and screen-space derivatives are exact enough for an effect that is
    then blurred by its own upsample. */
 fragment float4 ssao_fragment(PostOut in [[stage_in]],
                               constant PostUniforms &u [[buffer(0)]],
+                              constant SceneUniforms &s [[buffer(1)]],
                               depth2d<float> depthTex [[texture(0)]],
                               sampler samp [[sampler(0)]]) {
     float d = depthTex.sample(samp, in.uv);
@@ -653,6 +765,31 @@ fragment float4 ssao_fragment(PostOut in [[stage_in]],
     }
 
     float ao = 1.0 - (occlusion / float(SAMPLES)) * u.params.y;
+
+    // Contact shadow from whichever fixture is nearest. One light rather than
+    // all eight: the cost is a depth march per light, and the nearest one is
+    // the one casting the shadow the eye is looking for.
+    int lightCount = min(int(s.misc.x), MAX_POINT_LIGHTS);
+    float bestDistance = 1e9;
+    float3 bestPosition = float3(0.0);
+    bool found = false;
+    for (int j = 0; j < lightCount; ++j) {
+        float3 lp = s.pointLights[j].positionRange.xyz;
+        float d = length(lp - P);
+        if (d < bestDistance) {
+            bestDistance = d;
+            bestPosition = lp;
+            found = true;
+        }
+    }
+    if (found && bestDistance > 0.05) {
+        float3 toLight = normalize(bestPosition - P);
+        // Only surfaces actually facing the light can be shadowed by it.
+        if (dot(N, toLight) > 0.0) {
+            ao *= contactShadow(P, N, toLight, u.camera.xyz, u, depthTex, samp);
+        }
+    }
+
     return float4(clamp(ao, 0.0, 1.0), 0.0, 0.0, 1.0);
 }
 
@@ -797,7 +934,7 @@ fragment float4 water_fragment(VertexOut in [[stage_in]],
         if (ndl <= 0.0) continue;
         float3 radiance = u.pointLights[i].colorIntensity.rgb
                         * (u.pointLights[i].colorIntensity.w * atten);
-        direct += pbrDirect(N, V, L, w.tint.rgb, roughness, F0) * radiance * ndl;
+        direct += pbrDirect(N, V, L, w.tint.rgb, roughness, F0, L) * radiance * ndl;
     }
 
     if (u.flash.w > 0.0) {
@@ -811,7 +948,7 @@ fragment float4 water_fragment(VertexOut in [[stage_in]],
         float ndl = max(dot(N, L), 0.0);
         if (ndl > 0.0 && cone > 0.0) {
             float3 radiance = u.flash.rgb * (u.flash.w * cone * atten);
-            direct += pbrDirect(N, V, L, w.tint.rgb, roughness, F0) * radiance * ndl;
+            direct += pbrDirect(N, V, L, w.tint.rgb, roughness, F0, L) * radiance * ndl;
         }
     }
 
